@@ -163,13 +163,9 @@ export function useResolver({ inputData }: { inputData: InputData }): {
   columns: ColumnDef<UserRow>[];
   data: UserRow[];
   currentRowIndex: number;
+  initialize: (freezeTime: number) => void;
   step: () => boolean;
 } {
-  const problemById = useMemo<ProblemById>(
-    () => _.keyBy(inputData.problems, 'problemId'),
-    [inputData.problems]
-  );
-
   const pointByBatchId = useMemo<PointByBatchId>(() => {
     const arr = inputData.problems.map((problem) =>
       _.mapValues(
@@ -273,6 +269,24 @@ export function useResolver({ inputData }: { inputData: InputData }): {
     inputData.users.length - 1
   );
 
+  const initialize = useCallback(
+    (freezeTime: number) => {
+      for (const [submissionId, submission] of Object.entries(submissionById)) {
+        if (submission.time < freezeTime) {
+          resolveSubmissions({
+            submissionId: parseInt(submissionId),
+            submissionById,
+            remainingSubmissionIdsByUserId,
+            setRemainingSubmissionIdsByUserId,
+            state,
+            setState
+          });
+        }
+      }
+    },
+    [submissionById, remainingSubmissionIdsByUserId, state]
+  );
+
   const step = useCallback(() => {
     if (currentRowIndex === -1) {
       return false;
@@ -309,6 +323,7 @@ export function useResolver({ inputData }: { inputData: InputData }): {
     columns,
     data,
     currentRowIndex,
+    initialize,
     step
   };
 }

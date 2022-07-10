@@ -32,7 +32,7 @@ function Loading({
 }
 
 function Ranking({ inputData }: { inputData: InputData }) {
-  const { columns, data, step } = useResolver({ inputData });
+  const { columns, data, initialize, step } = useResolver({ inputData });
 
   const table = useReactTable({
     columns,
@@ -51,7 +51,8 @@ function Ranking({ inputData }: { inputData: InputData }) {
 
   return (
     <>
-      <button onClick={() => step()}>AAAAAAAAa</button>
+      <button onClick={() => initialize(15)}>Initialize</button>
+      <button onClick={() => step()}>Step</button>
       <table>
         <thead>
           {table.getHeaderGroups().map((headerGroup, i) => (
