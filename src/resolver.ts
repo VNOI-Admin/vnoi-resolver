@@ -1,60 +1,62 @@
 import { useCallback, useMemo, useState } from 'react';
-import { Column } from 'react-table';
+import { ColumnDef } from '@tanstack/react-table';
 import _ from 'lodash';
 
-export interface InputUser {
+export type InputUser = {
   userId: number;
   username: string;
-  fullname: string;
-}
+  fullName: string;
+};
 
-export interface InputProblem {
+export type InputProblem = {
   problemId: number;
   name: string;
   batches: Array<number>;
-}
+};
 
-export interface InputSubmission {
+export type InputSubmission = {
   submissionId: number;
   problemId: number;
   userId: number;
   time: number; // seconds since beginning of contest
   results: Array<number>;
-}
+};
 
-export interface InputData {
+export type InputData = {
   users: Array<InputUser>;
   problems: Array<InputProblem>;
   submissions: Array<InputSubmission>;
-}
+};
 
-export interface TableRow {
+export type UserRow = {
   rank: number;
-  username: number;
+  userId: number;
+  username: string;
+  fullName: string;
   total: number;
   penalty: number;
-  [batchId: string]: number;
-}
+  points: { [batchId: string]: number };
+};
 
-interface ProblemById {
+type ProblemById = {
   [problemId: number]: InputProblem;
-}
+};
 
-interface PointByBatchId {
+type PointByBatchId = {
   [batchId: string]: number;
-}
+};
 
-interface SubmissionByUserId {
+type SubmissionByUserId = {
   [userId: number]: InputSubmission[];
-}
+};
 
-interface InternalUser extends InputUser {
+type InternalUser = InputUser & {
   points: PointByBatchId;
-}
+};
 
-interface InternalState {
+type InternalState = {
   [userId: number]: InternalUser;
-}
+};
 
 function shuffle(arr: Array<any>) {
   arr = [...arr];
@@ -76,13 +78,20 @@ function rankUsers({
   pointByBatchId: PointByBatchId;
   submissionByUserId: SubmissionByUserId;
   state: InternalState;
-}): TableRow[] {
-  return [];
+}): UserRow[] {
+  return _.values(state).map((user) => {
+    const points = _.mapValues(
+      user.points,
+      (accepted, batchId) => pointByBatchId[batchId] * accepted
+    );
+    const total = _.sum(_.values(points));
+    return { ...user, points, total, penalty: 0, rank: 0 };
+  });
 }
 
 export function useResolver({ inputData }: { inputData: InputData }): {
-  columns: ReadonlyArray<Column<object>>;
-  data: ReadonlyArray<object>;
+  columns: ColumnDef<UserRow>[];
+  data: UserRow[];
   step: () => boolean;
 } {
   const problemById = useMemo<ProblemById>(
@@ -115,36 +124,47 @@ export function useResolver({ inputData }: { inputData: InputData }): {
   );
 
   const columns = useMemo(() => {
-    const columns: Array<Column<object>> = [];
+    const columns: ColumnDef<UserRow>[] = [];
 
     columns.push({
-      Header: 'Rank',
-      accessor: 'rank'
+      id: 'rank',
+      header: 'Rank',
+      accessorKey: 'rank'
     });
 
     columns.push({
-      Header: 'Username',
-      accessor: 'username'
+      id: 'username',
+      header: 'Username',
+      accessorKey: 'username'
+    });
+
+    columns.push({
+      id: 'fullName',
+      header: 'Full Name',
+      accessorKey: 'fullName'
     });
 
     for (const problem of inputData.problems) {
       columns.push({
-        Header: problem.name,
+        header: problem.name,
         columns: problem.batches.map((_, i) => ({
-          Header: `Subtask ${i + 1}`,
-          accessor: `${problem.problemId}_${i}}`
+          id: `${problem.problemId}_${i}`,
+          header: `Subtask ${i + 1}`,
+          accessorFn: (row: UserRow) => row.points[`${problem.problemId}_${i}`]
         }))
       });
     }
 
     columns.push({
-      Header: 'Total',
-      accessor: 'total'
+      id: 'total',
+      header: 'Total',
+      accessorKey: 'total'
     });
 
     columns.push({
-      Header: 'Penalty',
-      accessor: 'penalty'
+      id: 'penalty',
+      header: 'Penalty',
+      accessorKey: 'penalty'
     });
 
     return columns;
@@ -174,6 +194,9 @@ export function useResolver({ inputData }: { inputData: InputData }): {
   );
 
   const step = useCallback(() => {
+    setState((state) =>
+      _.keyBy(_.initial(_.shuffle(_.values(state))), 'userId')
+    );
     return true;
   }, []);
 

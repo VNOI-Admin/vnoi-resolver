@@ -1,8 +1,8 @@
 {
   "users": [
-    { "userId": 1, "username": "hieplpvip", "fullname": "Lê Bảo Hiệp" },
-    { "userId": 2, "username": "xxxxxxxxx", "fullname": "xxxxxxxxxxx" },
-    { "userId": 3, "username": "yyyyyyyyy", "fullname": "yyyyyyyyyyy" }
+    { "userId": 1, "username": "hieplpvip", "fullName": "Lê Bảo Hiệp" },
+    { "userId": 2, "username": "xxxxxxxxx", "fullName": "xxxxxxxxxxx" },
+    { "userId": 3, "username": "yyyyyyyyy", "fullName": "yyyyyyyyyyy" }
   ],
   "problems": [
     { "problemId": 1, "name": "Problem 1", "batches": [20, 30, 50] },

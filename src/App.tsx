@@ -1,5 +1,9 @@
 import React, { Dispatch, SetStateAction, useState } from 'react';
-import { useTable } from 'react-table';
+import {
+  flexRender,
+  getCoreRowModel,
+  useReactTable
+} from '@tanstack/react-table';
 import { motion, AnimatePresence } from 'framer-motion';
 
 import './App.css';
@@ -30,11 +34,11 @@ function Loading({
 function Ranking({ inputData }: { inputData: InputData }) {
   const { columns, data, step } = useResolver({ inputData });
 
-  const { getTableProps, getTableBodyProps, headerGroups, rows, prepareRow } =
-    useTable({
-      columns,
-      data
-    });
+  const table = useReactTable({
+    columns,
+    data,
+    getCoreRowModel: getCoreRowModel()
+  });
 
   const spring = React.useMemo(
     () => ({
@@ -48,48 +52,34 @@ function Ranking({ inputData }: { inputData: InputData }) {
   return (
     <>
       <button onClick={() => step()}>AAAAAAAAa</button>
-      <table {...getTableProps()}>
+      <table>
         <thead>
-          {headerGroups.map((headerGroup, i) => (
-            <tr {...headerGroup.getHeaderGroupProps()}>
-              {headerGroup.headers.map((column) => (
-                <th
-                  {...column.getHeaderProps({
-                    style: {
-                      minWidth: column.minWidth
-                    }
-                  })}
-                >
-                  <div>{column.render('Header')}</div>
+          {table.getHeaderGroups().map((headerGroup, i) => (
+            <tr key={headerGroup.id}>
+              {headerGroup.headers.map((header) => (
+                <th key={header.id} colSpan={header.colSpan}>
+                  {header.isPlaceholder
+                    ? null
+                    : flexRender(
+                        header.column.columnDef.header,
+                        header.getContext()
+                      )}
                 </th>
               ))}
             </tr>
           ))}
         </thead>
-        <tbody {...getTableBodyProps()}>
+        <tbody>
           <AnimatePresence>
-            {rows.map((row, i) => {
-              prepareRow(row);
-              return (
-                <motion.tr
-                  layout
-                  transition={spring}
-                  {...row.getRowProps({ key: (row.original as any).userId })}
-                >
-                  {row.cells.map((cell, i) => {
-                    return (
-                      <motion.td
-                        layout
-                        transition={spring}
-                        {...cell.getCellProps()}
-                      >
-                        {cell.render('Cell')}
-                      </motion.td>
-                    );
-                  })}
-                </motion.tr>
-              );
-            })}
+            {table.getRowModel().rows.map((row) => (
+              <motion.tr key={row.original.userId} layout transition={spring}>
+                {row.getVisibleCells().map((cell) => (
+                  <motion.td key={cell.id} layout transition={spring}>
+                    {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                  </motion.td>
+                ))}
+              </motion.tr>
+            ))}
           </AnimatePresence>
         </tbody>
       </table>
