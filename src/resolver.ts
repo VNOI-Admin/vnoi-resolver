@@ -1,4 +1,10 @@
-import { useCallback, useMemo, useState } from 'react';
+import {
+  Dispatch,
+  SetStateAction,
+  useCallback,
+  useMemo,
+  useState
+} from 'react';
 import { ColumnDef } from '@tanstack/react-table';
 import _ from 'lodash';
 
@@ -46,52 +52,117 @@ type PointByBatchId = {
   [batchId: string]: number;
 };
 
-type SubmissionByUserId = {
-  [userId: number]: InputSubmission[];
+type SubmissionById = {
+  [submissionId: number]: InputSubmission;
+};
+
+type SubmissionIdsByUserId = {
+  [userId: number]: number[];
 };
 
 type InternalUser = InputUser & {
   points: PointByBatchId;
+  lastAlteringScoreSubmissionTime: number;
+  pastSubmissionTimes: number[];
+  penalty: number;
 };
 
 type InternalState = {
   [userId: number]: InternalUser;
 };
 
-function shuffle(arr: Array<any>) {
-  arr = [...arr];
-  const shuffled = [];
-  while (arr.length) {
-    const rand = Math.floor(Math.random() * arr.length);
-    shuffled.push(arr.splice(rand, 1)[0]);
-  }
-  return shuffled;
-}
-
 function rankUsers({
-  problemById,
   pointByBatchId,
-  submissionByUserId,
   state
 }: {
-  problemById: ProblemById;
   pointByBatchId: PointByBatchId;
-  submissionByUserId: SubmissionByUserId;
   state: InternalState;
 }): UserRow[] {
-  return _.values(state).map((user) => {
-    const points = _.mapValues(
-      user.points,
-      (accepted, batchId) => pointByBatchId[batchId] * accepted
-    );
-    const total = _.sum(_.values(points));
-    return { ...user, points, total, penalty: 0, rank: 0 };
-  });
+  const rows = _.orderBy(
+    _.values(state).map((user) => {
+      const points = _.mapValues(
+        user.points,
+        (accepted, batchId) => pointByBatchId[batchId] * accepted
+      );
+      const total = _.sum(_.values(points));
+      return { ...user, points, total, rank: 0 };
+    }),
+    ['total', 'penalty'],
+    ['desc', 'asc']
+  );
+
+  let [lastTotal, lastPenalty, rank] = [-1, -1, 0];
+  for (let i = 0; i < rows.length; i++) {
+    if (rows[i].total !== lastTotal || rows[i].penalty !== lastPenalty) {
+      rank = i + 1;
+      lastTotal = rows[i].total;
+      lastPenalty = rows[i].penalty;
+    }
+    rows[i].rank = rank;
+  }
+
+  return rows;
+}
+
+function resolveSubmissions({
+  submissionId,
+  submissionById,
+  remainingSubmissionIdsByUserId,
+  setRemainingSubmissionIdsByUserId,
+  state,
+  setState
+}: {
+  submissionId: number;
+  submissionById: SubmissionById;
+  remainingSubmissionIdsByUserId: SubmissionIdsByUserId;
+  setRemainingSubmissionIdsByUserId: Dispatch<
+    SetStateAction<SubmissionIdsByUserId>
+  >;
+  state: InternalState;
+  setState: Dispatch<SetStateAction<InternalState>>;
+}) {
+  remainingSubmissionIdsByUserId = _.cloneDeep(remainingSubmissionIdsByUserId);
+  state = _.cloneDeep(state);
+
+  const submission = submissionById[submissionId];
+  const userId = submission.userId;
+
+  let changed = false;
+  for (let i = 0; i < submission.results.length; i++) {
+    const batchId = `${submission.problemId}_${i}`;
+    if (submission.results[i] === 1 && state[userId].points[batchId] === 0) {
+      state[userId].points[batchId] = 1;
+      changed = true;
+    }
+  }
+
+  state[userId].pastSubmissionTimes.push(submission.time);
+  if (changed) {
+    state[userId].lastAlteringScoreSubmissionTime = submission.time;
+    state[userId].penalty =
+      submission.time +
+      5 *
+        state[userId].pastSubmissionTimes.filter(
+          (time) => time < submission.time
+        ).length;
+  }
+
+  remainingSubmissionIdsByUserId[userId] = _.without(
+    remainingSubmissionIdsByUserId[userId],
+    submissionId
+  );
+  // if (remainingSubmissionIdsByUserId[userId].length === 0) {
+  //   delete remainingSubmissionIdsByUserId[userId];
+  // }
+
+  setRemainingSubmissionIdsByUserId(remainingSubmissionIdsByUserId);
+  setState(state);
 }
 
 export function useResolver({ inputData }: { inputData: InputData }): {
   columns: ColumnDef<UserRow>[];
   data: UserRow[];
+  currentRowIndex: number;
   step: () => boolean;
 } {
   const problemById = useMemo<ProblemById>(
@@ -115,13 +186,17 @@ export function useResolver({ inputData }: { inputData: InputData }): {
     return _.merge({}, ...arr);
   }, [inputData.problems]);
 
-  const submissionByUserId = useMemo<SubmissionByUserId>(
-    () =>
-      _.mapValues(_.groupBy(inputData.submissions, 'userId'), (subs) =>
-        _.sortBy(subs, 'submissionId')
-      ),
+  const submissionById = useMemo<SubmissionById>(
+    () => _.keyBy(inputData.submissions, 'submissionId'),
     [inputData.submissions]
   );
+
+  const [remainingSubmissionIdsByUserId, setRemainingSubmissionIdsByUserId] =
+    useState<SubmissionIdsByUserId>(
+      _.mapValues(_.groupBy(inputData.submissions, 'userId'), (subs) =>
+        _.sortBy(_.map(subs, 'submissionId')).reverse()
+      )
+    );
 
   const columns = useMemo(() => {
     const columns: ColumnDef<UserRow>[] = [];
@@ -174,7 +249,10 @@ export function useResolver({ inputData }: { inputData: InputData }): {
     const state: InternalState = _.keyBy(
       inputData.users.map((user) => ({
         ...user,
-        points: _.mapValues(pointByBatchId, () => 0)
+        points: _.mapValues(pointByBatchId, () => 0),
+        lastAlteringScoreSubmissionTime: 0,
+        pastSubmissionTimes: [],
+        penalty: 0
       })),
       'userId'
     );
@@ -185,24 +263,52 @@ export function useResolver({ inputData }: { inputData: InputData }): {
   const data = useMemo(
     () =>
       rankUsers({
-        problemById,
         pointByBatchId,
-        submissionByUserId,
         state
       }),
-    [problemById, pointByBatchId, submissionByUserId, state]
+    [pointByBatchId, state]
+  );
+
+  const [currentRowIndex, setCurrentRowIndex] = useState<number>(
+    inputData.users.length - 1
   );
 
   const step = useCallback(() => {
-    setState((state) =>
-      _.keyBy(_.initial(_.shuffle(_.values(state))), 'userId')
-    );
+    if (currentRowIndex === -1) {
+      return false;
+    }
+
+    if (!remainingSubmissionIdsByUserId[data[currentRowIndex].userId]?.length) {
+      setCurrentRowIndex((currentRowIndex) => currentRowIndex - 1);
+      return true;
+    }
+
+    const submissionId = _.last(
+      remainingSubmissionIdsByUserId[data[currentRowIndex].userId]
+    )!;
+
+    resolveSubmissions({
+      submissionId,
+      submissionById,
+      remainingSubmissionIdsByUserId,
+      setRemainingSubmissionIdsByUserId,
+      state,
+      setState
+    });
+
     return true;
-  }, []);
+  }, [
+    submissionById,
+    remainingSubmissionIdsByUserId,
+    state,
+    currentRowIndex,
+    data
+  ]);
 
   return {
     columns,
     data,
+    currentRowIndex,
     step
   };
 }

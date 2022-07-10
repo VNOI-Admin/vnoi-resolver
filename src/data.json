@@ -12,23 +12,23 @@
     {
       "submissionId": 1,
       "problemId": 1,
+      "userId": 2,
+      "time": 10,
+      "results": [0, 1, 0]
+    },
+    {
+      "submissionId": 2,
+      "problemId": 1,
       "userId": 1,
-      "time": 1,
+      "time": 15,
       "results": [1, 1, 1]
     },
     {
       "submissionId": 3,
       "problemId": 1,
       "userId": 2,
-      "time": 15,
+      "time": 20,
       "results": [1, 1, 1]
-    },
-    {
-      "submissionId": 2,
-      "problemId": 1,
-      "userId": 2,
-      "time": 10,
-      "results": [0, 1, 0]
     }
   ]
 }
