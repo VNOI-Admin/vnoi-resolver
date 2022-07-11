@@ -50,7 +50,7 @@ function Loading({
 }
 
 function Ranking({ inputData }: { inputData: InputData }) {
-  const { columns, data, markedUserId, step } = useResolver({
+  const { columns, data, markedUserId, markedProblemId, step } = useResolver({
     inputData,
     freezeTime: 60 * 60
   });
@@ -107,7 +107,11 @@ function Ranking({ inputData }: { inputData: InputData }) {
                   {row.getVisibleCells().map((cell) => {
                     const style = {} as React.CSSProperties;
                     const isProblem = cell.column.id.startsWith('problem_');
-                    if (isProblem && (cell.getValue() as number) > 0) {
+                    if (
+                      isProblem &&
+                      cell.row.original.userId === markedUserId &&
+                      cell.column.id === `problem_${markedProblemId}`
+                    ) {
                       style.backgroundColor = '#00ff00';
                     }
                     return (

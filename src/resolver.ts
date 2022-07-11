@@ -107,13 +107,21 @@ function resolvePendingSubmission({
   submissionById,
   pointByProblemId,
   state,
-  setState
+  setState,
+  setCurrentCell
 }: {
   submissionId: number;
   submissionById: SubmissionById;
   pointByProblemId: PointByProblemId;
   state: InternalState;
   setState: Dispatch<SetStateAction<InternalState>>;
+  setCurrentCell: Dispatch<
+    SetStateAction<{
+      currentRowIndex: number;
+      markedUserId: number;
+      markedProblemId: number;
+    }>
+  >;
 }) {
   state = _.cloneDeep(state);
 
@@ -143,6 +151,7 @@ function resolvePendingSubmission({
   user.penalty = calculatePenalty(user, submissionById);
 
   setState(state);
+  setCurrentCell((current) => ({ ...current, markedProblemId: -1 }));
 }
 
 function rankUsers(state: InternalState): UserRow[] {
@@ -178,6 +187,7 @@ export function useResolver({
   columns: ColumnDef<UserRow>[];
   data: UserRow[];
   markedUserId: number;
+  markedProblemId: number;
   step: () => boolean;
 } {
   const userIds = useMemo<number[]>(
@@ -337,23 +347,24 @@ export function useResolver({
       publicUser.pendingSubmissionIds.sort();
     }
 
-    console.log(publicState, privateState);
-
     return publicState;
   });
 
   const data = useMemo(() => rankUsers(state), [state]);
 
-  const [{ currentRowIndex, markedUserId }, setCurrentRow] = useState({
-    currentRowIndex: inputData.users.length - 1,
-    markedUserId: -1
-  });
+  const [{ currentRowIndex, markedUserId, markedProblemId }, setCurrentCell] =
+    useState({
+      currentRowIndex: inputData.users.length - 1,
+      markedUserId: -1,
+      markedProblemId: -1
+    });
 
   const step = useCallback(() => {
     if (markedUserId !== data[currentRowIndex]?.userId) {
-      setCurrentRow(({ currentRowIndex }) => ({
+      setCurrentCell(({ currentRowIndex }) => ({
         currentRowIndex,
-        markedUserId: data[currentRowIndex]?.userId
+        markedUserId: data[currentRowIndex]?.userId,
+        markedProblemId: -1
       }));
       return true;
     }
@@ -363,10 +374,29 @@ export function useResolver({
     }
 
     if (!state[data[currentRowIndex].userId]?.pendingSubmissionIds?.length) {
-      setCurrentRow(({ currentRowIndex }) => ({
-        currentRowIndex: currentRowIndex - 1,
-        markedUserId: data[currentRowIndex - 1]?.userId
-      }));
+      setCurrentCell(({ currentRowIndex }) => {
+        currentRowIndex = currentRowIndex - 1;
+        const markedUserId = data[currentRowIndex]?.userId;
+        const nextProblemIds = state[markedUserId]?.pendingSubmissionIds ?? [];
+        return {
+          currentRowIndex,
+          markedUserId,
+          markedProblemId: submissionById[nextProblemIds[0]]?.problemId ?? -1
+        };
+      });
+      return true;
+    }
+
+    if (markedProblemId === -1) {
+      setCurrentCell(({ currentRowIndex, markedUserId }) => {
+        return {
+          currentRowIndex,
+          markedUserId,
+          markedProblemId:
+            submissionById[state[markedUserId].pendingSubmissionIds[0]]
+              .problemId
+        };
+      });
       return true;
     }
 
@@ -378,7 +408,8 @@ export function useResolver({
       submissionById,
       pointByProblemId,
       state,
-      setState
+      setState,
+      setCurrentCell
     });
 
     return true;
@@ -388,6 +419,8 @@ export function useResolver({
     state,
     currentRowIndex,
     markedUserId,
+    markedProblemId,
+    setCurrentCell,
     data
   ]);
 
@@ -395,6 +428,7 @@ export function useResolver({
     columns,
     data,
     markedUserId,
+    markedProblemId,
     step
   };
 }
