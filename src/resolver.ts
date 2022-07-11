@@ -17,15 +17,15 @@ export type InputUser = {
 export type InputProblem = {
   problemId: number;
   name: string;
-  batches: Array<number>;
+  points: number;
 };
 
 export type InputSubmission = {
   submissionId: number;
   problemId: number;
   userId: number;
-  time: number; // seconds since beginning of contest
-  results: Array<number>;
+  time: number;
+  points: number;
 };
 
 export type InputData = {
@@ -34,6 +34,14 @@ export type InputData = {
   submissions: Array<InputSubmission>;
 };
 
+export enum ProblemAttemptStatus {
+  UNATTEMPTED = 1,
+  INCORRECT = 2,
+  PARTIAL = 4,
+  ACCEPTED = 8,
+  PENDING = 16
+}
+
 export type UserRow = {
   rank: number;
   userId: number;
@@ -41,25 +49,33 @@ export type UserRow = {
   fullName: string;
   total: number;
   penalty: number;
-  points: { [batchId: string]: number };
+  points: { [problemId: number]: number };
+  status: { [problemId: number]: ProblemAttemptStatus };
 };
 
-type PointByBatchId = {
-  [batchId: string]: number;
+type PointByProblemId = {
+  [problemId: number]: number;
+};
+
+type StatusByProblemId = {
+  [problemId: number]: ProblemAttemptStatus;
+};
+
+type ProblemById = {
+  [problemId: number]: InputProblem;
 };
 
 type SubmissionById = {
   [submissionId: number]: InputSubmission;
 };
 
-type SubmissionIdsByUserId = {
-  [userId: number]: number[];
-};
-
 type InternalUser = InputUser & {
-  points: PointByBatchId;
+  points: PointByProblemId;
+  status: StatusByProblemId;
+  lastAlteringScoreSubmissionIdByProblemId: { [problemId: number]: number };
   lastAlteringScoreSubmissionId: number;
-  incorrectSubmissionIds: number[];
+  submissionIdsByProblemId: { [problemId: number]: number[] };
+  pendingSubmissionIds: number[];
   penalty: number;
 };
 
@@ -68,84 +84,72 @@ type InternalState = {
 };
 
 function calculatePenalty(user: InternalUser, submissionById: SubmissionById) {
-  const lastId = user.lastAlteringScoreSubmissionId;
-  if (lastId === -1) {
+  if (user.lastAlteringScoreSubmissionId === -1) {
     return 0;
   }
+
+  let incorrect = 0;
+  for (const [problemId, last] of Object.entries(
+    user.lastAlteringScoreSubmissionIdByProblemId
+  )) {
+    incorrect += user.submissionIdsByProblemId[problemId as any].filter(
+      (submissionId) => submissionId < last
+    ).length;
+  }
+
   return (
-    submissionById[lastId].time +
-    300 * user.incorrectSubmissionIds.filter((id) => id < lastId).length
+    submissionById[user.lastAlteringScoreSubmissionId].time + 300 * incorrect
   );
 }
 
-function resolveSubmissions({
+function resolvePendingSubmission({
   submissionId,
   submissionById,
-  remainingSubmissionIdsByUserId,
-  setRemainingSubmissionIdsByUserId,
+  pointByProblemId,
   state,
   setState
 }: {
   submissionId: number;
   submissionById: SubmissionById;
-  remainingSubmissionIdsByUserId: SubmissionIdsByUserId;
-  setRemainingSubmissionIdsByUserId: Dispatch<
-    SetStateAction<SubmissionIdsByUserId>
-  >;
+  pointByProblemId: PointByProblemId;
   state: InternalState;
   setState: Dispatch<SetStateAction<InternalState>>;
-}): boolean {
-  remainingSubmissionIdsByUserId = _.cloneDeep(remainingSubmissionIdsByUserId);
+}) {
   state = _.cloneDeep(state);
 
   const submission = submissionById[submissionId];
-  const userId = submission.userId;
+  const user = state[submission.userId];
+  const problemId = submission.problemId;
 
-  let changed = false;
-  for (let i = 0; i < submission.results.length; i++) {
-    const batchId = `${submission.problemId}_${i}`;
-    if (submission.results[i] === 1 && state[userId].points[batchId] === 0) {
-      state[userId].points[batchId] = 1;
-      changed = true;
-    }
+  if (submission.points > user.points[problemId]) {
+    user.points[problemId] = submission.points;
+    user.lastAlteringScoreSubmissionIdByProblemId[problemId] = submissionId;
+    user.lastAlteringScoreSubmissionId = submissionId;
   }
 
-  if (changed) {
-    state[userId].lastAlteringScoreSubmissionId = submission.submissionId;
-    state[userId].penalty = calculatePenalty(state[userId], submissionById);
+  if (user.points[problemId] === 0) {
+    user.status[problemId] = ProblemAttemptStatus.INCORRECT;
+  } else if (user.points[problemId] < pointByProblemId[problemId]) {
+    user.status[problemId] = ProblemAttemptStatus.PARTIAL;
   } else {
-    state[userId].incorrectSubmissionIds.push(submission.submissionId);
+    user.status[problemId] = ProblemAttemptStatus.ACCEPTED;
   }
 
-  remainingSubmissionIdsByUserId[userId] = _.without(
-    remainingSubmissionIdsByUserId[userId],
+  user.pendingSubmissionIds = _.without(
+    user.pendingSubmissionIds,
     submissionId
   );
-  // if (remainingSubmissionIdsByUserId[userId].length === 0) {
-  //   delete remainingSubmissionIdsByUserId[userId];
-  // }
 
-  setRemainingSubmissionIdsByUserId(remainingSubmissionIdsByUserId);
+  user.penalty = calculatePenalty(user, submissionById);
+
   setState(state);
-
-  return changed;
 }
 
-function rankUsers({
-  pointByBatchId,
-  state
-}: {
-  pointByBatchId: PointByBatchId;
-  state: InternalState;
-}): UserRow[] {
+function rankUsers(state: InternalState): UserRow[] {
   const rows = _.orderBy(
     _.values(state).map((user) => {
-      const points = _.mapValues(
-        user.points,
-        (accepted, batchId) => pointByBatchId[batchId] * accepted
-      );
-      const total = _.sum(_.values(points));
-      return { ...user, points, total, rank: 0 };
+      const total = _.sum(_.values(user.points));
+      return { ...user, total, rank: 0 };
     }),
     ['total', 'penalty'],
     ['desc', 'asc']
@@ -181,41 +185,32 @@ export function useResolver({
     [inputData.users]
   );
 
-  const pointByBatchId = useMemo<PointByBatchId>(() => {
-    const arr = inputData.problems.map((problem) =>
-      _.mapValues(
-        _.keyBy(
-          problem.batches.map((point, i) => ({
-            id: `${problem.problemId}_${i}`,
-            point
-          })),
-          'id'
-        ),
-        'point'
-      )
-    );
-    return _.merge({}, ...arr);
-  }, [inputData.problems]);
-
-  const submissionById = useMemo<SubmissionById>(
-    () => _.keyBy(inputData.submissions, 'submissionId'),
-    [inputData.submissions]
+  const filteredSubmissions = useMemo<InputSubmission[]>(
+    () =>
+      inputData.submissions.filter((submission) =>
+        userIds.includes(submission.userId)
+      ),
+    [inputData.submissions, userIds]
   );
 
-  const [remainingSubmissionIdsByUserId, setRemainingSubmissionIdsByUserId] =
-    useState<SubmissionIdsByUserId>(
-      _.pickBy(
-        _.mapValues(_.groupBy(inputData.submissions, 'userId'), (subs) =>
-          _.sortBy(
-            _.map(
-              subs.filter((sub) => sub.time >= freezeTime),
-              'submissionId'
-            )
-          ).reverse()
-        ),
-        (_, userId) => userIds.includes(parseInt(userId))
-      )
-    );
+  const problemById = useMemo<ProblemById>(
+    () => _.keyBy(inputData.problems, 'problemId'),
+    [inputData.problems]
+  );
+
+  const submissionById = useMemo<SubmissionById>(
+    () => _.keyBy(filteredSubmissions, 'submissionId'),
+    [filteredSubmissions]
+  );
+
+  const pointByProblemId = useMemo<PointByProblemId>(
+    () =>
+      _.mapValues(
+        _.keyBy(inputData.problems, 'problemId'),
+        (problem) => problem.points
+      ),
+    [inputData.problems]
+  );
 
   const columns = useMemo(() => {
     const columns: ColumnDef<UserRow>[] = [];
@@ -240,12 +235,9 @@ export function useResolver({
 
     for (const problem of inputData.problems) {
       columns.push({
+        id: `problem_${problem.problemId}`,
         header: problem.name,
-        columns: problem.batches.map((_, i) => ({
-          id: `${problem.problemId}_${i}`,
-          header: `Subtask ${i + 1}`,
-          accessorFn: (row: UserRow) => row.points[`${problem.problemId}_${i}`]
-        }))
+        accessorFn: (row: UserRow) => row.points[problem.problemId]
       });
     }
 
@@ -266,72 +258,95 @@ export function useResolver({
   }, [inputData.problems]);
 
   const [state, setState] = useState(() => {
-    const state: InternalState = _.keyBy(
-      inputData.users.map((user) => ({
-        ...user,
-        points: _.mapValues(pointByBatchId, () => 0),
-        lastAlteringScoreSubmissionId: -1,
-        incorrectSubmissionIds: [],
-        penalty: 0
-      })),
-      'userId'
-    );
+    function processSubmissions(submissions: InputSubmission[]): InternalState {
+      const state: InternalState = _.keyBy(
+        inputData.users.map((user) => ({
+          ...user,
+          points: _.mapValues(pointByProblemId, () => 0),
+          status: _.mapValues(
+            _.keyBy(inputData.problems, 'problemId'),
+            () => ProblemAttemptStatus.UNATTEMPTED
+          ),
+          lastAlteringScoreSubmissionIdByProblemId: {},
+          lastAlteringScoreSubmissionId: -1,
+          submissionIdsByProblemId: _.mapValues(
+            _.keyBy(inputData.problems, 'problemId'),
+            () => []
+          ),
+          pendingSubmissionIds: [],
+          penalty: 0
+        })),
+        'userId'
+      );
 
-    const publicSubmissionIdsByUserId: SubmissionIdsByUserId = _.pickBy(
-      _.mapValues(_.groupBy(inputData.submissions, 'userId'), (subs) =>
-        _.sortBy(
-          _.map(
-            subs.filter((sub) => sub.time < freezeTime),
-            'submissionId'
-          )
-        )
-      ),
-      (_, userId) => userIds.includes(parseInt(userId))
-    );
-    console.log(publicSubmissionIdsByUserId);
+      submissions = _.sortBy(submissions, 'submissionId');
 
-    for (const userId in publicSubmissionIdsByUserId) {
-      for (const submissionId of publicSubmissionIdsByUserId[userId]) {
-        let changed = false;
-        const submission = submissionById[submissionId];
-        for (let i = 0; i < submission.results.length; i++) {
-          const batchId = `${submission.problemId}_${i}`;
-          if (
-            submission.results[i] === 1 &&
-            state[userId].points[batchId] === 0
-          ) {
-            state[userId].points[batchId] = 1;
-            changed = true;
-          }
+      for (const submission of submissions) {
+        const user = state[submission.userId];
+        const problemId = submission.problemId;
+        const submissionId = submission.submissionId;
+
+        if (submission.points > user.points[problemId]) {
+          user.points[problemId] = submission.points;
+          user.lastAlteringScoreSubmissionIdByProblemId[problemId] =
+            submissionId;
+          user.lastAlteringScoreSubmissionId = submissionId;
         }
 
-        if (changed) {
-          state[userId].lastAlteringScoreSubmissionId = submission.submissionId;
+        user.submissionIdsByProblemId[problemId].push(submissionId);
+
+        if (user.points[problemId] === 0) {
+          user.status[problemId] = ProblemAttemptStatus.INCORRECT;
+        } else if (user.points[problemId] < pointByProblemId[problemId]) {
+          user.status[problemId] = ProblemAttemptStatus.PARTIAL;
         } else {
-          state[userId].incorrectSubmissionIds.push(submission.submissionId);
+          user.status[problemId] = ProblemAttemptStatus.ACCEPTED;
         }
       }
+
+      for (const userId in state) {
+        state[userId].penalty = calculatePenalty(state[userId], submissionById);
+      }
+
+      return state;
     }
 
-    for (const userId in state) {
-      state[userId].penalty = calculatePenalty(state[userId], submissionById);
+    const publicState = processSubmissions(
+      filteredSubmissions.filter((submission) => submission.time < freezeTime)
+    );
+    const privateState = processSubmissions(filteredSubmissions);
+
+    for (const userId in publicState) {
+      const publicUser = publicState[userId];
+      const privateUser = privateState[userId];
+      publicUser.submissionIdsByProblemId =
+        privateUser.submissionIdsByProblemId;
+
+      for (const problemId in problemById) {
+        if (
+          publicUser.lastAlteringScoreSubmissionIdByProblemId[problemId] !==
+          privateUser.lastAlteringScoreSubmissionIdByProblemId[problemId]
+        ) {
+          publicUser.pendingSubmissionIds.push(
+            privateUser.lastAlteringScoreSubmissionIdByProblemId[problemId]
+          );
+          publicUser.status[problemId] |= ProblemAttemptStatus.PENDING;
+        }
+      }
+
+      publicUser.pendingSubmissionIds.sort();
     }
 
-    return state;
+    console.log(publicState, privateState);
+
+    return publicState;
   });
 
-  const data = useMemo(
-    () =>
-      rankUsers({
-        pointByBatchId,
-        state
-      }),
-    [pointByBatchId, state]
-  );
+  const data = useMemo(() => rankUsers(state), [state]);
 
   const [{ currentRowIndex, markedUserId }, setCurrentRow] = useState({
     currentRowIndex: inputData.users.length - 1,
-    markedUserId: -1,
+    markedUserId: -1
   });
 
   const step = useCallback(() => {
@@ -347,7 +362,7 @@ export function useResolver({
       return false;
     }
 
-    if (!remainingSubmissionIdsByUserId[data[currentRowIndex].userId]?.length) {
+    if (!state[data[currentRowIndex].userId]?.pendingSubmissionIds?.length) {
       setCurrentRow(({ currentRowIndex }) => ({
         currentRowIndex: currentRowIndex - 1,
         markedUserId: data[currentRowIndex - 1]?.userId
@@ -355,15 +370,13 @@ export function useResolver({
       return true;
     }
 
-    const submissionId = _.last(
-      remainingSubmissionIdsByUserId[data[currentRowIndex].userId]
-    )!;
+    const submissionId =
+      state[data[currentRowIndex].userId].pendingSubmissionIds[0];
 
-    resolveSubmissions({
+    resolvePendingSubmission({
       submissionId,
       submissionById,
-      remainingSubmissionIdsByUserId,
-      setRemainingSubmissionIdsByUserId,
+      pointByProblemId,
       state,
       setState
     });
@@ -371,7 +384,7 @@ export function useResolver({
     return true;
   }, [
     submissionById,
-    remainingSubmissionIdsByUserId,
+    pointByProblemId,
     state,
     currentRowIndex,
     markedUserId,

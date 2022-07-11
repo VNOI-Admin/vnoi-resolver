@@ -98,15 +98,32 @@ function Ranking({ inputData }: { inputData: InputData }) {
                 style.backgroundColor = '#ffa500';
               }
               return (
-                <motion.tr key={row.original.userId} layout transition={spring} style={style}>
-                  {row.getVisibleCells().map((cell) => (
-                    <motion.td key={cell.id} layout transition={spring}>
-                      {flexRender(
-                        cell.column.columnDef.cell,
-                        cell.getContext()
-                      )}
-                    </motion.td>
-                  ))}
+                <motion.tr
+                  key={row.original.userId}
+                  layout
+                  transition={spring}
+                  style={style}
+                >
+                  {row.getVisibleCells().map((cell) => {
+                    const style = {} as React.CSSProperties;
+                    const isProblem = cell.column.id.startsWith('problem_');
+                    if (isProblem && (cell.getValue() as number) > 0) {
+                      style.backgroundColor = '#00ff00';
+                    }
+                    return (
+                      <motion.td
+                        key={cell.id}
+                        layout
+                        transition={spring}
+                        style={style}
+                      >
+                        {flexRender(
+                          cell.column.columnDef.cell,
+                          cell.getContext()
+                        )}
+                      </motion.td>
+                    );
+                  })}
                 </motion.tr>
               );
             })}
