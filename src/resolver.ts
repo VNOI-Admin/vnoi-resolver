@@ -44,10 +44,6 @@ export type UserRow = {
   points: { [batchId: string]: number };
 };
 
-type ProblemById = {
-  [problemId: number]: InputProblem;
-};
-
 type PointByBatchId = {
   [batchId: string]: number;
 };
@@ -62,14 +58,78 @@ type SubmissionIdsByUserId = {
 
 type InternalUser = InputUser & {
   points: PointByBatchId;
-  lastAlteringScoreSubmissionTime: number;
-  pastSubmissionTimes: number[];
+  lastAlteringScoreSubmissionId: number;
+  incorrectSubmissionIds: number[];
   penalty: number;
 };
 
 type InternalState = {
   [userId: number]: InternalUser;
 };
+
+function calculatePenalty(user: InternalUser, submissionById: SubmissionById) {
+  const lastId = user.lastAlteringScoreSubmissionId;
+  if (lastId === -1) {
+    return 0;
+  }
+  return (
+    submissionById[lastId].time +
+    300 * user.incorrectSubmissionIds.filter((id) => id < lastId).length
+  );
+}
+
+function resolveSubmissions({
+  submissionId,
+  submissionById,
+  remainingSubmissionIdsByUserId,
+  setRemainingSubmissionIdsByUserId,
+  state,
+  setState
+}: {
+  submissionId: number;
+  submissionById: SubmissionById;
+  remainingSubmissionIdsByUserId: SubmissionIdsByUserId;
+  setRemainingSubmissionIdsByUserId: Dispatch<
+    SetStateAction<SubmissionIdsByUserId>
+  >;
+  state: InternalState;
+  setState: Dispatch<SetStateAction<InternalState>>;
+}): boolean {
+  remainingSubmissionIdsByUserId = _.cloneDeep(remainingSubmissionIdsByUserId);
+  state = _.cloneDeep(state);
+
+  const submission = submissionById[submissionId];
+  const userId = submission.userId;
+
+  let changed = false;
+  for (let i = 0; i < submission.results.length; i++) {
+    const batchId = `${submission.problemId}_${i}`;
+    if (submission.results[i] === 1 && state[userId].points[batchId] === 0) {
+      state[userId].points[batchId] = 1;
+      changed = true;
+    }
+  }
+
+  if (changed) {
+    state[userId].lastAlteringScoreSubmissionId = submission.submissionId;
+    state[userId].penalty = calculatePenalty(state[userId], submissionById);
+  } else {
+    state[userId].incorrectSubmissionIds.push(submission.submissionId);
+  }
+
+  remainingSubmissionIdsByUserId[userId] = _.without(
+    remainingSubmissionIdsByUserId[userId],
+    submissionId
+  );
+  // if (remainingSubmissionIdsByUserId[userId].length === 0) {
+  //   delete remainingSubmissionIdsByUserId[userId];
+  // }
+
+  setRemainingSubmissionIdsByUserId(remainingSubmissionIdsByUserId);
+  setState(state);
+
+  return changed;
+}
 
 function rankUsers({
   pointByBatchId,
@@ -104,68 +164,23 @@ function rankUsers({
   return rows;
 }
 
-function resolveSubmissions({
-  submissionId,
-  submissionById,
-  remainingSubmissionIdsByUserId,
-  setRemainingSubmissionIdsByUserId,
-  state,
-  setState
+export function useResolver({
+  inputData,
+  freezeTime
 }: {
-  submissionId: number;
-  submissionById: SubmissionById;
-  remainingSubmissionIdsByUserId: SubmissionIdsByUserId;
-  setRemainingSubmissionIdsByUserId: Dispatch<
-    SetStateAction<SubmissionIdsByUserId>
-  >;
-  state: InternalState;
-  setState: Dispatch<SetStateAction<InternalState>>;
-}) {
-  remainingSubmissionIdsByUserId = _.cloneDeep(remainingSubmissionIdsByUserId);
-  state = _.cloneDeep(state);
-
-  const submission = submissionById[submissionId];
-  const userId = submission.userId;
-
-  let changed = false;
-  for (let i = 0; i < submission.results.length; i++) {
-    const batchId = `${submission.problemId}_${i}`;
-    if (submission.results[i] === 1 && state[userId].points[batchId] === 0) {
-      state[userId].points[batchId] = 1;
-      changed = true;
-    }
-  }
-
-  state[userId].pastSubmissionTimes.push(submission.time);
-  if (changed) {
-    state[userId].lastAlteringScoreSubmissionTime = submission.time;
-    state[userId].penalty =
-      submission.time +
-      5 *
-        state[userId].pastSubmissionTimes.filter(
-          (time) => time < submission.time
-        ).length;
-  }
-
-  remainingSubmissionIdsByUserId[userId] = _.without(
-    remainingSubmissionIdsByUserId[userId],
-    submissionId
-  );
-  // if (remainingSubmissionIdsByUserId[userId].length === 0) {
-  //   delete remainingSubmissionIdsByUserId[userId];
-  // }
-
-  setRemainingSubmissionIdsByUserId(remainingSubmissionIdsByUserId);
-  setState(state);
-}
-
-export function useResolver({ inputData }: { inputData: InputData }): {
+  inputData: InputData;
+  freezeTime: number;
+}): {
   columns: ColumnDef<UserRow>[];
   data: UserRow[];
-  currentRowIndex: number;
-  initialize: (freezeTime: number) => void;
+  markedUserId: number;
   step: () => boolean;
 } {
+  const userIds = useMemo<number[]>(
+    () => inputData.users.map((user) => user.userId),
+    [inputData.users]
+  );
+
   const pointByBatchId = useMemo<PointByBatchId>(() => {
     const arr = inputData.problems.map((problem) =>
       _.mapValues(
@@ -189,8 +204,16 @@ export function useResolver({ inputData }: { inputData: InputData }): {
 
   const [remainingSubmissionIdsByUserId, setRemainingSubmissionIdsByUserId] =
     useState<SubmissionIdsByUserId>(
-      _.mapValues(_.groupBy(inputData.submissions, 'userId'), (subs) =>
-        _.sortBy(_.map(subs, 'submissionId')).reverse()
+      _.pickBy(
+        _.mapValues(_.groupBy(inputData.submissions, 'userId'), (subs) =>
+          _.sortBy(
+            _.map(
+              subs.filter((sub) => sub.time >= freezeTime),
+              'submissionId'
+            )
+          ).reverse()
+        ),
+        (_, userId) => userIds.includes(parseInt(userId))
       )
     );
 
@@ -235,7 +258,8 @@ export function useResolver({ inputData }: { inputData: InputData }): {
     columns.push({
       id: 'penalty',
       header: 'Penalty',
-      accessorKey: 'penalty'
+      accessorFn: (row) =>
+        new Date(row.penalty * 1000).toISOString().substring(11, 19)
     });
 
     return columns;
@@ -246,12 +270,52 @@ export function useResolver({ inputData }: { inputData: InputData }): {
       inputData.users.map((user) => ({
         ...user,
         points: _.mapValues(pointByBatchId, () => 0),
-        lastAlteringScoreSubmissionTime: 0,
-        pastSubmissionTimes: [],
+        lastAlteringScoreSubmissionId: -1,
+        incorrectSubmissionIds: [],
         penalty: 0
       })),
       'userId'
     );
+
+    const publicSubmissionIdsByUserId: SubmissionIdsByUserId = _.pickBy(
+      _.mapValues(_.groupBy(inputData.submissions, 'userId'), (subs) =>
+        _.sortBy(
+          _.map(
+            subs.filter((sub) => sub.time < freezeTime),
+            'submissionId'
+          )
+        )
+      ),
+      (_, userId) => userIds.includes(parseInt(userId))
+    );
+    console.log(publicSubmissionIdsByUserId);
+
+    for (const userId in publicSubmissionIdsByUserId) {
+      for (const submissionId of publicSubmissionIdsByUserId[userId]) {
+        let changed = false;
+        const submission = submissionById[submissionId];
+        for (let i = 0; i < submission.results.length; i++) {
+          const batchId = `${submission.problemId}_${i}`;
+          if (
+            submission.results[i] === 1 &&
+            state[userId].points[batchId] === 0
+          ) {
+            state[userId].points[batchId] = 1;
+            changed = true;
+          }
+        }
+
+        if (changed) {
+          state[userId].lastAlteringScoreSubmissionId = submission.submissionId;
+        } else {
+          state[userId].incorrectSubmissionIds.push(submission.submissionId);
+        }
+      }
+    }
+
+    for (const userId in state) {
+      state[userId].penalty = calculatePenalty(state[userId], submissionById);
+    }
 
     return state;
   });
@@ -265,35 +329,29 @@ export function useResolver({ inputData }: { inputData: InputData }): {
     [pointByBatchId, state]
   );
 
-  const [currentRowIndex, setCurrentRowIndex] = useState<number>(
-    inputData.users.length - 1
-  );
-
-  const initialize = useCallback(
-    (freezeTime: number) => {
-      for (const [submissionId, submission] of Object.entries(submissionById)) {
-        if (submission.time < freezeTime) {
-          resolveSubmissions({
-            submissionId: parseInt(submissionId),
-            submissionById,
-            remainingSubmissionIdsByUserId,
-            setRemainingSubmissionIdsByUserId,
-            state,
-            setState
-          });
-        }
-      }
-    },
-    [submissionById, remainingSubmissionIdsByUserId, state]
-  );
+  const [{ currentRowIndex, markedUserId }, setCurrentRow] = useState({
+    currentRowIndex: inputData.users.length - 1,
+    markedUserId: -1,
+  });
 
   const step = useCallback(() => {
+    if (markedUserId !== data[currentRowIndex]?.userId) {
+      setCurrentRow(({ currentRowIndex }) => ({
+        currentRowIndex,
+        markedUserId: data[currentRowIndex]?.userId
+      }));
+      return true;
+    }
+
     if (currentRowIndex === -1) {
       return false;
     }
 
     if (!remainingSubmissionIdsByUserId[data[currentRowIndex].userId]?.length) {
-      setCurrentRowIndex((currentRowIndex) => currentRowIndex - 1);
+      setCurrentRow(({ currentRowIndex }) => ({
+        currentRowIndex: currentRowIndex - 1,
+        markedUserId: data[currentRowIndex - 1]?.userId
+      }));
       return true;
     }
 
@@ -316,14 +374,14 @@ export function useResolver({ inputData }: { inputData: InputData }): {
     remainingSubmissionIdsByUserId,
     state,
     currentRowIndex,
+    markedUserId,
     data
   ]);
 
   return {
     columns,
     data,
-    currentRowIndex,
-    initialize,
+    markedUserId,
     step
   };
 }
