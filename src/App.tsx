@@ -7,6 +7,7 @@ import {
 import { motion, AnimatePresence } from 'framer-motion';
 
 import './App.css';
+import { useKeyPress } from './hooks';
 import { InputData, useResolver } from './resolver';
 
 function Loading({
@@ -64,15 +65,19 @@ function Ranking({ inputData }: { inputData: InputData }) {
   const spring = React.useMemo(
     () => ({
       type: 'spring',
+      bounce: 0,
       damping: 50,
+      mass: 0.5,
       stiffness: 100
     }),
     []
   );
 
+  useKeyPress('Shift', step);
+
   return (
     <>
-      <button onClick={() => step()}>Step</button>
+      <button onClick={step}>Step</button>
       <table>
         <thead>
           {table.getHeaderGroups().map((headerGroup, i) => (
