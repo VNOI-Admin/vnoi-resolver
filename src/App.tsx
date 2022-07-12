@@ -11,7 +11,7 @@ import 'bootstrap/dist/css/bootstrap.min.css';
 
 import './App.css';
 import { useKeyPress } from './hooks';
-import { InputData, useResolver } from './resolver';
+import { InputData, ProblemAttemptStatus, useResolver } from './resolver';
 
 function Loading({
   setInputData
@@ -86,7 +86,6 @@ function Ranking({ inputData }: { inputData: InputData }) {
             <tr key={headerGroup.id}>
               {headerGroup.headers.map((header) => {
                 const isProblem = !!header.column.columnDef.meta?.isProblem;
-
                 return (
                   <th key={header.id} colSpan={header.colSpan}>
                     {header.isPlaceholder
@@ -111,7 +110,7 @@ function Ranking({ inputData }: { inputData: InputData }) {
             {table.getRowModel().rows.map((row) => {
               const style = {} as React.CSSProperties;
               if (row.original.userId === markedUserId) {
-                style.backgroundColor = '#ffa500';
+                style.backgroundColor = '#ced4da';
               }
               return (
                 <motion.tr
@@ -121,26 +120,54 @@ function Ranking({ inputData }: { inputData: InputData }) {
                   style={style}
                 >
                   {row.getVisibleCells().map((cell) => {
-                    const style = {} as React.CSSProperties;
                     const isProblem = !!cell.column.columnDef.meta?.isProblem;
+                    if (!isProblem) {
+                      return (
+                        <motion.td key={cell.id} layout transition={spring}>
+                          {flexRender(
+                            cell.column.columnDef.cell,
+                            cell.getContext()
+                          )}
+                        </motion.td>
+                      );
+                    }
+
+                    const style = {} as React.CSSProperties;
                     if (
                       isProblem &&
                       cell.row.original.userId === markedUserId &&
                       cell.column.id === `problem_${markedProblemId}`
                     ) {
-                      style.backgroundColor = '#00ff00';
+                      style.backgroundColor = 'black';
                     }
+
+                    const problemId = cell.column.columnDef.meta?.problemId!;
+                    const submissionPoints = cell.getValue() as number;
+                    const status = cell.row.original.status[problemId];
+                    const isPending = !!(status & ProblemAttemptStatus.PENDING);
+                    const className = isPending
+                      ? 'pending-score'
+                      : status === ProblemAttemptStatus.ACCEPTED
+                      ? 'full-score'
+                      : status === ProblemAttemptStatus.PARTIAL
+                      ? 'partial-score'
+                      : status === ProblemAttemptStatus.INCORRECT
+                      ? 'failed-score'
+                      : '';
+
+                    console.log(submissionPoints, problemId);
+
                     return (
                       <motion.td
                         key={cell.id}
                         layout
                         transition={spring}
                         style={style}
+                        className={className}
                       >
-                        {flexRender(
-                          cell.column.columnDef.cell,
-                          cell.getContext()
-                        )}
+                        {status !== ProblemAttemptStatus.UNATTEMPTED &&
+                          submissionPoints}
+                        {isPending && <span>?</span>}
                       </motion.td>
                     );
                   })}

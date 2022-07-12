@@ -45,3 +45,22 @@
 .point-denominator {
   font-size: 0.7em;
 }
+
+.failed-score {
+  font-weight: bold;
+  color: red;
+}
+
+.partial-score {
+  color: green;
+}
+
+.full-score {
+  font-weight: bold;
+  color: green;
+}
+
+.pending-score {
+  font-weight: bold;
+  color: #fd7e14;
+}

@@ -92,6 +92,10 @@ function calculatePenalty(user: InternalUser, submissionById: SubmissionById) {
   for (const [problemId, last] of Object.entries(
     user.lastAlteringScoreSubmissionIdByProblemId
   )) {
+    if (submissionById[last].points === 0) {
+      continue;
+    }
+
     incorrect += user.submissionIdsByProblemId[problemId as any].filter(
       (submissionId) => submissionId < last
     ).length;
@@ -133,6 +137,8 @@ function resolvePendingSubmission({
     user.points[problemId] = submission.points;
     user.lastAlteringScoreSubmissionIdByProblemId[problemId] = submissionId;
     user.lastAlteringScoreSubmissionId = submissionId;
+  } else if (submission.points === 0 && user.points[problemId] === 0) {
+    user.lastAlteringScoreSubmissionIdByProblemId[problemId] = submissionId;
   }
 
   if (user.points[problemId] === 0) {
@@ -250,6 +256,7 @@ export function useResolver({
         accessorFn: (row: UserRow) => row.points[problem.problemId],
         meta: {
           isProblem: true,
+          problemId: problem.problemId,
           points: problem.points
         }
       });
@@ -305,6 +312,9 @@ export function useResolver({
           user.lastAlteringScoreSubmissionIdByProblemId[problemId] =
             submissionId;
           user.lastAlteringScoreSubmissionId = submissionId;
+        } else if (submission.points === 0 && user.points[problemId] === 0) {
+          user.lastAlteringScoreSubmissionIdByProblemId[problemId] =
+            submissionId;
         }
 
         user.submissionIdsByProblemId[problemId].push(submissionId);
