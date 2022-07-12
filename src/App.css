@@ -46,6 +46,11 @@
   font-size: 0.7em;
 }
 
+.user-points {
+  font-weight: bold;
+  color: black;
+}
+
 .failed-score {
   font-weight: bold;
   color: red;

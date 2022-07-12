@@ -2,6 +2,7 @@
   "name": "vnoi-resolver",
   "version": "0.1.0",
   "private": true,
+  "homepage": "https://hieplpvip.github.io/vnoi-resolver",
   "dependencies": {
     "@tanstack/react-table": "^8.2.2",
     "@testing-library/jest-dom": "^5.14.1",
@@ -13,6 +14,7 @@
     "@types/react-dom": "^18.0.0",
     "bootstrap": "^5.1.3",
     "framer-motion": "^6.4.3",
+    "gh-pages": "^4.0.0",
     "lodash": "^4.17.21",
     "react": "^18.2.0",
     "react-bootstrap": "^2.4.0",
@@ -22,6 +24,8 @@
     "web-vitals": "^2.1.0"
   },
   "scripts": {
+    "predeploy": "npm run build",
+    "deploy": "gh-pages -d build",
     "start": "react-scripts start",
     "build": "react-scripts build",
     "test": "react-scripts test",
