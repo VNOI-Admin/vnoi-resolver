@@ -247,7 +247,11 @@ export function useResolver({
       columns.push({
         id: `problem_${problem.problemId}`,
         header: problem.name,
-        accessorFn: (row: UserRow) => row.points[problem.problemId]
+        accessorFn: (row: UserRow) => row.points[problem.problemId],
+        meta: {
+          isProblem: true,
+          points: problem.points
+        }
       });
     }
 

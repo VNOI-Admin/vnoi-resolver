@@ -6,6 +6,9 @@ import {
 } from '@tanstack/react-table';
 import { motion, AnimatePresence } from 'framer-motion';
 
+import Table from 'react-bootstrap/Table';
+import 'bootstrap/dist/css/bootstrap.min.css';
+
 import './App.css';
 import { useKeyPress } from './hooks';
 import { InputData, useResolver } from './resolver';
@@ -66,7 +69,7 @@ function Ranking({ inputData }: { inputData: InputData }) {
     () => ({
       type: 'spring',
       bounce: 0,
-      damping: 50,
+      damping: 10,
       mass: 0.5,
       stiffness: 100
     }),
@@ -77,21 +80,29 @@ function Ranking({ inputData }: { inputData: InputData }) {
 
   return (
     <>
-      <button onClick={step}>Step</button>
-      <table>
+      <Table className='ranking-table'>
         <thead>
-          {table.getHeaderGroups().map((headerGroup, i) => (
+          {table.getHeaderGroups().map((headerGroup) => (
             <tr key={headerGroup.id}>
-              {headerGroup.headers.map((header) => (
-                <th key={header.id} colSpan={header.colSpan}>
-                  {header.isPlaceholder
-                    ? null
-                    : flexRender(
-                        header.column.columnDef.header,
-                        header.getContext()
-                      )}
-                </th>
-              ))}
+              {headerGroup.headers.map((header) => {
+                const isProblem = !!header.column.columnDef.meta?.isProblem;
+
+                return (
+                  <th key={header.id} colSpan={header.colSpan}>
+                    {header.isPlaceholder
+                      ? null
+                      : flexRender(
+                          header.column.columnDef.header,
+                          header.getContext()
+                        )}
+                    {isProblem && (
+                      <div className='point-denominator'>
+                        {header.column.columnDef.meta?.points!}
+                      </div>
+                    )}
+                  </th>
+                );
+              })}
             </tr>
           ))}
         </thead>
@@ -111,7 +122,7 @@ function Ranking({ inputData }: { inputData: InputData }) {
                 >
                   {row.getVisibleCells().map((cell) => {
                     const style = {} as React.CSSProperties;
-                    const isProblem = cell.column.id.startsWith('problem_');
+                    const isProblem = !!cell.column.columnDef.meta?.isProblem;
                     if (
                       isProblem &&
                       cell.row.original.userId === markedUserId &&
@@ -138,7 +149,7 @@ function Ranking({ inputData }: { inputData: InputData }) {
             })}
           </AnimatePresence>
         </tbody>
-      </table>
+      </Table>
     </>
   );
 }

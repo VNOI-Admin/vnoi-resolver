@@ -36,3 +36,12 @@
     transform: rotate(360deg);
   }
 }
+
+.ranking-table thead th {
+  text-align: center;
+  vertical-align: middle;
+}
+
+.point-denominator {
+  font-size: 0.7em;
+}
