@@ -7,6 +7,7 @@ import {
 import { motion } from 'framer-motion';
 
 import Table from 'react-bootstrap/Table';
+import Form from 'react-bootstrap/Form';
 import 'bootstrap/dist/css/bootstrap.min.css';
 
 import './App.css';
@@ -32,10 +33,11 @@ function Loading({
   };
 
   return (
-    <>
-      <h1>Upload data:</h1>
-      <input type='file' onChange={handleChange} />
-    </>
+    <div style={{ padding: '50px' }}>
+      <Form.Group controlId='formFile' className='w-50 mb-3 mx-auto'>
+        <Form.Control type='file' onChange={handleChange as any} />
+      </Form.Group>
+    </div>
   );
 }
 
