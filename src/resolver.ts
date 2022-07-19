@@ -43,7 +43,7 @@ export enum ProblemAttemptStatus {
 }
 
 export type UserRow = {
-  rank: number;
+  rank: string;
   userId: number;
   username: string;
   fullName: string;
@@ -160,24 +160,31 @@ function resolvePendingSubmission({
   setCurrentCell((current) => ({ ...current, markedProblemId: -1 }));
 }
 
-function rankUsers(state: InternalState): UserRow[] {
+function rankUsers(
+  state: InternalState,
+  unofficialContestants: string[]
+): UserRow[] {
   const rows = _.orderBy(
     _.values(state).map((user) => {
       const total = _.sum(_.values(user.points));
-      return { ...user, total, rank: 0 };
+      return { ...user, total, rank: '' };
     }),
     ['total', 'penalty'],
     ['desc', 'asc']
   );
 
-  let [lastTotal, lastPenalty, rank] = [-1, -1, 0];
+  let [lastTotal, lastPenalty, rank, cnt] = [-1, -1, 0, 0];
   for (let i = 0; i < rows.length; i++) {
+    if (unofficialContestants.includes(rows[i].username)) {
+      continue;
+    }
+    cnt += 1;
     if (rows[i].total !== lastTotal || rows[i].penalty !== lastPenalty) {
-      rank = i + 1;
+      rank = cnt;
       lastTotal = rows[i].total;
       lastPenalty = rows[i].penalty;
     }
-    rows[i].rank = rank;
+    rows[i].rank = rank.toString();
   }
 
   return rows;
@@ -185,10 +192,12 @@ function rankUsers(state: InternalState): UserRow[] {
 
 export function useResolver({
   inputData,
-  freezeTime
+  unofficialContestants,
+  frozenTime
 }: {
   inputData: InputData;
-  freezeTime: number;
+  unofficialContestants: string[];
+  frozenTime: number;
 }): {
   columns: ColumnDef<UserRow>[];
   data: UserRow[];
@@ -336,7 +345,7 @@ export function useResolver({
     }
 
     const publicState = processSubmissions(
-      filteredSubmissions.filter((submission) => submission.time < freezeTime)
+      filteredSubmissions.filter((submission) => submission.time < frozenTime)
     );
     const privateState = processSubmissions(filteredSubmissions);
 
@@ -364,7 +373,10 @@ export function useResolver({
     return publicState;
   });
 
-  const data = useMemo(() => rankUsers(state), [state]);
+  const data = useMemo(
+    () => rankUsers(state, unofficialContestants),
+    [state, unofficialContestants]
+  );
 
   const [{ currentRowIndex, markedUserId, markedProblemId }, setCurrentCell] =
     useState({
