@@ -34,6 +34,10 @@ export type InputData = {
   submissions: Array<InputSubmission>;
 };
 
+export type ImageData = {
+  [key: string]: string;
+};
+
 export enum ProblemAttemptStatus {
   UNATTEMPTED = 1,
   INCORRECT = 2,
@@ -192,10 +196,12 @@ function rankUsers(
 
 export function useResolver({
   inputData,
+  imageData,
   unofficialContestants,
   frozenTime
 }: {
   inputData: InputData;
+  imageData: ImageData;
   unofficialContestants: string[];
   frozenTime: number;
 }): {
@@ -203,6 +209,7 @@ export function useResolver({
   data: UserRow[];
   markedUserId: number;
   markedProblemId: number;
+  imageSrc: string | null;
   step: () => boolean;
 } {
   const userIds = useMemo<number[]>(
@@ -286,6 +293,8 @@ export function useResolver({
 
     return columns;
   }, [inputData.problems]);
+
+  const [imageSrc, setImageSrc] = useState<string | null>(null);
 
   const [state, setState] = useState(() => {
     function processSubmissions(submissions: InputSubmission[]): InternalState {
@@ -400,16 +409,23 @@ export function useResolver({
     }
 
     if (!state[data[currentRowIndex].userId]?.pendingSubmissionIds?.length) {
-      setCurrentCell(({ currentRowIndex }) => {
-        currentRowIndex = currentRowIndex - 1;
-        const markedUserId = data[currentRowIndex]?.userId;
-        const nextProblemIds = state[markedUserId]?.pendingSubmissionIds ?? [];
-        return {
-          currentRowIndex,
-          markedUserId,
-          markedProblemId: submissionById[nextProblemIds[0]]?.problemId ?? -1
-        };
+      if (data[currentRowIndex].rank in imageData) {
+        if (imageSrc === null) {
+          setImageSrc(imageData[data[currentRowIndex].rank]);
+          return true;
+        } else {
+          setImageSrc(null);
+        }
+      }
+
+      const markedUserId = data[currentRowIndex - 1]?.userId;
+      const nextProblemIds = state[markedUserId]?.pendingSubmissionIds ?? [];
+      setCurrentCell({
+        currentRowIndex: currentRowIndex - 1,
+        markedUserId,
+        markedProblemId: submissionById[nextProblemIds[0]]?.problemId ?? -1
       });
+
       return true;
     }
 
@@ -447,7 +463,9 @@ export function useResolver({
     markedUserId,
     markedProblemId,
     setCurrentCell,
-    data
+    data,
+    imageData,
+    imageSrc
   ]);
 
   return {
@@ -455,6 +473,7 @@ export function useResolver({
     data,
     markedUserId,
     markedProblemId,
+    imageSrc,
     step
   };
 }

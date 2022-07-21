@@ -21,13 +21,19 @@ import 'bootstrap/dist/css/bootstrap.min.css';
 
 import './App.css';
 import { useKeyPress } from './hooks';
-import { InputData, ProblemAttemptStatus, useResolver } from './resolver';
+import {
+  InputData,
+  ImageData,
+  ProblemAttemptStatus,
+  useResolver
+} from './resolver';
 
 function Loading({
   inputData,
   frozenTime,
   setLoading,
   setInputData,
+  setImageData,
   setFrozenTime,
   setUnofficialContestants
 }: {
@@ -35,10 +41,11 @@ function Loading({
   frozenTime: number;
   setLoading: Dispatch<SetStateAction<boolean>>;
   setInputData: Dispatch<SetStateAction<InputData | null>>;
+  setImageData: Dispatch<SetStateAction<ImageData>>;
   setFrozenTime: Dispatch<SetStateAction<number>>;
   setUnofficialContestants: Dispatch<SetStateAction<string[]>>;
 }) {
-  const handleFileChange = useCallback(
+  const handleInputChange = useCallback(
     (e: React.FormEvent<HTMLInputElement>) => {
       const fileReader = new FileReader();
       fileReader.onload = () => {
@@ -52,6 +59,18 @@ function Loading({
       fileReader.readAsText((e.target as HTMLInputElement).files![0]);
     },
     [setInputData]
+  );
+
+  const handleImageChange = useCallback(
+    (e: React.FormEvent<HTMLInputElement>) => {
+      const fileReader = new FileReader();
+      fileReader.onload = () => {
+        const imageData = JSON.parse(fileReader.result as string) as ImageData;
+        setImageData(imageData);
+      };
+      fileReader.readAsText((e.target as HTMLInputElement).files![0]);
+    },
+    [setImageData]
   );
 
   const handleFrozenTimeChange = useCallback(
@@ -85,7 +104,11 @@ function Loading({
     <Form className='w-50 mt-5 mx-auto'>
       <Form.Group className='mb-3'>
         <Form.Label>Data</Form.Label>
-        <Form.Control type='file' onChange={handleFileChange as any} />
+        <Form.Control type='file' onChange={handleInputChange as any} />
+      </Form.Group>
+      <Form.Group className='mb-3'>
+        <Form.Label>Image</Form.Label>
+        <Form.Control type='file' onChange={handleImageChange as any} />
       </Form.Group>
       <Form.Group className='mb-3'>
         <Form.Label>Frozen time (since start of contest)</Form.Label>
@@ -112,18 +135,22 @@ function Loading({
 
 function Ranking({
   inputData,
+  imageData,
   frozenTime,
   unofficialContestants
 }: {
   inputData: InputData;
+  imageData: ImageData;
   frozenTime: number;
   unofficialContestants: string[];
 }) {
-  const { columns, data, markedUserId, markedProblemId, step } = useResolver({
-    inputData,
-    unofficialContestants,
-    frozenTime: frozenTime * 60
-  });
+  const { columns, data, markedUserId, markedProblemId, imageSrc, step } =
+    useResolver({
+      inputData,
+      imageData,
+      unofficialContestants,
+      frozenTime: frozenTime * 60
+    });
 
   const table = useReactTable({
     columns,
@@ -142,6 +169,10 @@ function Ranking({
   );
 
   useKeyPress('Enter', step);
+
+  if (imageSrc !== null) {
+    return <img src={imageSrc} alt='' />;
+  }
 
   return (
     <>
@@ -249,6 +280,7 @@ function Ranking({
 function App() {
   const [loading, setLoading] = useState<boolean>(true);
   const [inputData, setInputData] = useState<InputData | null>(null);
+  const [imageData, setImageData] = useState<ImageData>({});
   const [frozenTime, setFrozenTime] = useState<number>(90);
   const [unofficialContestants, setUnofficialContestants] = useState<string[]>(
     []
@@ -262,12 +294,14 @@ function App() {
           frozenTime={frozenTime}
           setLoading={setLoading}
           setInputData={setInputData}
+          setImageData={setImageData}
           setFrozenTime={setFrozenTime}
           setUnofficialContestants={setUnofficialContestants}
         />
       ) : (
         <Ranking
           inputData={inputData}
+          imageData={imageData}
           frozenTime={frozenTime}
           unofficialContestants={unofficialContestants}
         ></Ranking>
