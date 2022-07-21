@@ -31,19 +31,23 @@ import {
 function Loading({
   inputData,
   frozenTime,
+  hideUnofficialContestants,
   setLoading,
   setInputData,
   setImageData,
   setFrozenTime,
-  setUnofficialContestants
+  setUnofficialContestants,
+  setHideUnofficialContestants
 }: {
   inputData: InputData | null;
   frozenTime: number;
+  hideUnofficialContestants: boolean;
   setLoading: Dispatch<SetStateAction<boolean>>;
   setInputData: Dispatch<SetStateAction<InputData | null>>;
   setImageData: Dispatch<SetStateAction<ImageData>>;
   setFrozenTime: Dispatch<SetStateAction<number>>;
   setUnofficialContestants: Dispatch<SetStateAction<string[]>>;
+  setHideUnofficialContestants: Dispatch<SetStateAction<boolean>>;
 }) {
   const handleInputChange = useCallback(
     (e: React.FormEvent<HTMLInputElement>) => {
@@ -87,6 +91,13 @@ function Loading({
     [setUnofficialContestants]
   );
 
+  const handleCheckboxChange = useCallback(
+    (e: React.FormEvent<HTMLInputElement>) => {
+      setHideUnofficialContestants((e.target as HTMLInputElement).checked);
+    },
+    [setHideUnofficialContestants]
+  );
+
   const handleSubmit = useCallback(() => {
     setLoading(false);
   }, [setLoading]);
@@ -126,6 +137,14 @@ function Loading({
           onChange={handleSelectChange}
         />
       </Form.Group>
+      <Form.Group className='mb-3'>
+        <Form.Check
+          type='checkbox'
+          label='Hide unofficial contestants'
+          checked={hideUnofficialContestants}
+          onChange={handleCheckboxChange}
+        />
+      </Form.Group>
       <Button variant='primary' disabled={!inputData} onClick={handleSubmit}>
         Run
       </Button>
@@ -137,13 +156,28 @@ function Ranking({
   inputData,
   imageData,
   frozenTime,
-  unofficialContestants
+  unofficialContestants,
+  hideUnofficialContestants
 }: {
   inputData: InputData;
   imageData: ImageData;
   frozenTime: number;
   unofficialContestants: string[];
+  hideUnofficialContestants: boolean;
 }) {
+  const _inputData = useMemo(
+    () =>
+      !hideUnofficialContestants
+        ? inputData
+        : {
+            ...inputData,
+            users: inputData.users.filter(
+              (user) => !unofficialContestants.includes(user.username)
+            )
+          },
+    [inputData, unofficialContestants, hideUnofficialContestants]
+  );
+
   const {
     columns,
     data,
@@ -153,7 +187,7 @@ function Ranking({
     step,
     rollback
   } = useResolver({
-    inputData,
+    inputData: _inputData,
     imageData,
     unofficialContestants,
     frozenTime: frozenTime * 60
@@ -175,8 +209,8 @@ function Ranking({
     []
   );
 
-  useKeyPress('[', rollback);
-  useKeyPress(']', step);
+  useKeyPress(',', rollback);
+  useKeyPress('.', step);
 
   if (imageSrc !== null) {
     return (
@@ -297,6 +331,8 @@ function App() {
   const [unofficialContestants, setUnofficialContestants] = useState<string[]>(
     []
   );
+  const [hideUnofficialContestants, setHideUnofficialContestants] =
+    useState(true);
 
   return (
     <div className='App'>
@@ -304,11 +340,13 @@ function App() {
         <Loading
           inputData={inputData}
           frozenTime={frozenTime}
+          hideUnofficialContestants={hideUnofficialContestants}
           setLoading={setLoading}
           setInputData={setInputData}
           setImageData={setImageData}
           setFrozenTime={setFrozenTime}
           setUnofficialContestants={setUnofficialContestants}
+          setHideUnofficialContestants={setHideUnofficialContestants}
         />
       ) : (
         <Ranking
@@ -316,6 +354,7 @@ function App() {
           imageData={imageData}
           frozenTime={frozenTime}
           unofficialContestants={unofficialContestants}
+          hideUnofficialContestants={hideUnofficialContestants}
         ></Ranking>
       )}
     </div>
