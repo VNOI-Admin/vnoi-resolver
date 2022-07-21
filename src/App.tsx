@@ -144,13 +144,20 @@ function Ranking({
   frozenTime: number;
   unofficialContestants: string[];
 }) {
-  const { columns, data, markedUserId, markedProblemId, imageSrc, step } =
-    useResolver({
-      inputData,
-      imageData,
-      unofficialContestants,
-      frozenTime: frozenTime * 60
-    });
+  const {
+    columns,
+    data,
+    markedUserId,
+    markedProblemId,
+    imageSrc,
+    step,
+    rollback
+  } = useResolver({
+    inputData,
+    imageData,
+    unofficialContestants,
+    frozenTime: frozenTime * 60
+  });
 
   const table = useReactTable({
     columns,
@@ -168,7 +175,8 @@ function Ranking({
     []
   );
 
-  useKeyPress('Enter', step);
+  useKeyPress('[', rollback);
+  useKeyPress(']', step);
 
   if (imageSrc !== null) {
     return (

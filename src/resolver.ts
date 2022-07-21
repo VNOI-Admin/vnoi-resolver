@@ -1,12 +1,8 @@
-import {
-  Dispatch,
-  SetStateAction,
-  useCallback,
-  useMemo,
-  useState
-} from 'react';
+import { Dispatch, SetStateAction, useCallback, useMemo } from 'react';
 import { ColumnDef } from '@tanstack/react-table';
 import _ from 'lodash';
+
+import { useStateWithRollback } from './hooks';
 
 export type InputUser = {
   userId: number;
@@ -84,7 +80,11 @@ type InternalUser = InputUser & {
 };
 
 type InternalState = {
-  [userId: number]: InternalUser;
+  imageSrc: string | null;
+  currentRowIndex: number;
+  markedUserId: number;
+  markedProblemId: number;
+  users: { [userId: number]: InternalUser };
 };
 
 function calculatePenalty(user: InternalUser, submissionById: SubmissionById) {
@@ -115,26 +115,18 @@ function resolvePendingSubmission({
   submissionById,
   pointByProblemId,
   state,
-  setState,
-  setCurrentCell
+  setState
 }: {
   submissionId: number;
   submissionById: SubmissionById;
   pointByProblemId: PointByProblemId;
   state: InternalState;
   setState: Dispatch<SetStateAction<InternalState>>;
-  setCurrentCell: Dispatch<
-    SetStateAction<{
-      currentRowIndex: number;
-      markedUserId: number;
-      markedProblemId: number;
-    }>
-  >;
 }) {
   state = _.cloneDeep(state);
 
   const submission = submissionById[submissionId];
-  const user = state[submission.userId];
+  const user = state.users[submission.userId];
   const problemId = submission.problemId;
 
   if (submission.points > user.points[problemId]) {
@@ -160,8 +152,7 @@ function resolvePendingSubmission({
 
   user.penalty = calculatePenalty(user, submissionById);
 
-  setState(state);
-  setCurrentCell((current) => ({ ...current, markedProblemId: -1 }));
+  setState({ ...state, markedProblemId: -1 });
 }
 
 function rankUsers(
@@ -169,7 +160,7 @@ function rankUsers(
   unofficialContestants: string[]
 ): UserRow[] {
   const rows = _.orderBy(
-    _.values(state).map((user) => {
+    _.values(state.users).map((user) => {
       const total = _.sum(_.values(user.points));
       return { ...user, total, rank: '' };
     }),
@@ -211,6 +202,7 @@ export function useResolver({
   markedProblemId: number;
   imageSrc: string | null;
   step: () => boolean;
+  rollback: () => void;
 } {
   const userIds = useMemo<number[]>(
     () => inputData.users.map((user) => user.userId),
@@ -294,34 +286,38 @@ export function useResolver({
     return columns;
   }, [inputData.problems]);
 
-  const [imageSrc, setImageSrc] = useState<string | null>(null);
-
-  const [state, setState] = useState(() => {
+  const [state, setState, rollback] = useStateWithRollback(() => {
     function processSubmissions(submissions: InputSubmission[]): InternalState {
-      const state: InternalState = _.keyBy(
-        inputData.users.map((user) => ({
-          ...user,
-          points: _.mapValues(pointByProblemId, () => 0),
-          status: _.mapValues(
-            _.keyBy(inputData.problems, 'problemId'),
-            () => ProblemAttemptStatus.UNATTEMPTED
-          ),
-          lastAlteringScoreSubmissionIdByProblemId: {},
-          lastAlteringScoreSubmissionId: -1,
-          submissionIdsByProblemId: _.mapValues(
-            _.keyBy(inputData.problems, 'problemId'),
-            () => []
-          ),
-          pendingSubmissionIds: [],
-          penalty: 0
-        })),
-        'userId'
-      );
+      const state: InternalState = {
+        imageSrc: null,
+        currentRowIndex: inputData.users.length - 1,
+        markedUserId: -1,
+        markedProblemId: -1,
+        users: _.keyBy(
+          inputData.users.map((user) => ({
+            ...user,
+            points: _.mapValues(pointByProblemId, () => 0),
+            status: _.mapValues(
+              _.keyBy(inputData.problems, 'problemId'),
+              () => ProblemAttemptStatus.UNATTEMPTED
+            ),
+            lastAlteringScoreSubmissionIdByProblemId: {},
+            lastAlteringScoreSubmissionId: -1,
+            submissionIdsByProblemId: _.mapValues(
+              _.keyBy(inputData.problems, 'problemId'),
+              () => []
+            ),
+            pendingSubmissionIds: [],
+            penalty: 0
+          })),
+          'userId'
+        )
+      };
 
       submissions = _.sortBy(submissions, 'submissionId');
 
       for (const submission of submissions) {
-        const user = state[submission.userId];
+        const user = state.users[submission.userId];
         const problemId = submission.problemId;
         const submissionId = submission.submissionId;
 
@@ -346,8 +342,11 @@ export function useResolver({
         }
       }
 
-      for (const userId in state) {
-        state[userId].penalty = calculatePenalty(state[userId], submissionById);
+      for (const userId in state.users) {
+        state.users[userId].penalty = calculatePenalty(
+          state.users[userId],
+          submissionById
+        );
       }
 
       return state;
@@ -358,9 +357,9 @@ export function useResolver({
     );
     const privateState = processSubmissions(filteredSubmissions);
 
-    for (const userId in publicState) {
-      const publicUser = publicState[userId];
-      const privateUser = privateState[userId];
+    for (const userId in publicState.users) {
+      const publicUser = publicState.users[userId];
+      const privateUser = privateState.users[userId];
       publicUser.submissionIdsByProblemId =
         privateUser.submissionIdsByProblemId;
 
@@ -387,20 +386,15 @@ export function useResolver({
     [state, unofficialContestants]
   );
 
-  const [{ currentRowIndex, markedUserId, markedProblemId }, setCurrentCell] =
-    useState({
-      currentRowIndex: inputData.users.length - 1,
-      markedUserId: -1,
-      markedProblemId: -1
-    });
-
   const step = useCallback(() => {
+    const { imageSrc, currentRowIndex, markedUserId, markedProblemId } = state;
     if (markedUserId !== data[currentRowIndex]?.userId) {
-      setCurrentCell(({ currentRowIndex }) => ({
+      setState({
+        ...state,
         currentRowIndex,
         markedUserId: data[currentRowIndex]?.userId,
         markedProblemId: -1
-      }));
+      });
       return true;
     }
 
@@ -408,19 +402,23 @@ export function useResolver({
       return false;
     }
 
-    if (!state[data[currentRowIndex].userId]?.pendingSubmissionIds?.length) {
-      if (data[currentRowIndex].rank in imageData) {
-        if (imageSrc === null) {
-          setImageSrc(imageData[data[currentRowIndex].rank]);
-          return true;
-        } else {
-          setImageSrc(null);
-        }
+    if (
+      !state.users[data[currentRowIndex].userId]?.pendingSubmissionIds?.length
+    ) {
+      if (data[currentRowIndex].rank in imageData && imageSrc === null) {
+        setState({
+          ...state,
+          imageSrc: imageData[data[currentRowIndex].rank]
+        });
+        return true;
       }
 
       const markedUserId = data[currentRowIndex - 1]?.userId;
-      const nextProblemIds = state[markedUserId]?.pendingSubmissionIds ?? [];
-      setCurrentCell({
+      const nextProblemIds =
+        state.users[markedUserId]?.pendingSubmissionIds ?? [];
+      setState({
+        ...state,
+        imageSrc: null,
         currentRowIndex: currentRowIndex - 1,
         markedUserId,
         markedProblemId: submissionById[nextProblemIds[0]]?.problemId ?? -1
@@ -430,50 +428,38 @@ export function useResolver({
     }
 
     if (markedProblemId === -1) {
-      setCurrentCell(({ currentRowIndex, markedUserId }) => {
-        return {
-          currentRowIndex,
-          markedUserId,
-          markedProblemId:
-            submissionById[state[markedUserId].pendingSubmissionIds[0]]
-              .problemId
-        };
+      setState({
+        ...state,
+        currentRowIndex,
+        markedUserId,
+        markedProblemId:
+          submissionById[state.users[markedUserId].pendingSubmissionIds[0]]
+            .problemId
       });
       return true;
     }
 
     const submissionId =
-      state[data[currentRowIndex].userId].pendingSubmissionIds[0];
+      state.users[data[currentRowIndex].userId].pendingSubmissionIds[0];
 
     resolvePendingSubmission({
       submissionId,
       submissionById,
       pointByProblemId,
       state,
-      setState,
-      setCurrentCell
+      setState
     });
 
     return true;
-  }, [
-    submissionById,
-    pointByProblemId,
-    state,
-    currentRowIndex,
-    markedUserId,
-    markedProblemId,
-    setCurrentCell,
-    data,
-    imageData,
-    imageSrc
-  ]);
+  }, [submissionById, pointByProblemId, state, data, imageData, setState]);
 
   return {
     columns,
     data,
-    markedUserId,
-    markedProblemId,
-    imageSrc,
-    step
+    markedUserId: state.markedUserId,
+    markedProblemId: state.markedProblemId,
+    imageSrc: state.imageSrc,
+    step,
+    rollback
   };
 }
