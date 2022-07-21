@@ -171,7 +171,11 @@ function Ranking({
   useKeyPress('Enter', step);
 
   if (imageSrc !== null) {
-    return <img src={imageSrc} alt='' />;
+    return (
+      <div className='d-flex align-items-center h-100'>
+        <img className='mx-auto' src={imageSrc} alt='' />;
+      </div>
+    );
   }
 
   return (
