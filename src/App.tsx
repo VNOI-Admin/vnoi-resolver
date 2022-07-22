@@ -2,6 +2,7 @@ import React, {
   Dispatch,
   SetStateAction,
   useCallback,
+  useEffect,
   useMemo,
   useState
 } from 'react';
@@ -11,6 +12,7 @@ import {
   useReactTable
 } from '@tanstack/react-table';
 import { motion } from 'framer-motion';
+import queryString from 'query-string';
 
 import Select, { MultiValue } from 'react-select';
 
@@ -333,6 +335,28 @@ function App() {
   );
   const [hideUnofficialContestants, setHideUnofficialContestants] =
     useState(true);
+
+  useEffect(() => {
+    const load = async () => {
+      const params = queryString.parse(window.location.search);
+      if ('data' in params && 'image' in params) {
+        const data = (await (
+          await fetch(params.data as string)
+        ).json()) as InputData;
+        const image = (await (
+          await fetch(params.image as string)
+        ).json()) as ImageData;
+        data.submissions = data.submissions.map((submission) => ({
+          ...submission,
+          time: parseFloat(submission.time as any)
+        }));
+        setInputData(data);
+        setImageData(image);
+      }
+    };
+
+    load();
+  }, []);
 
   return (
     <div className='App'>
