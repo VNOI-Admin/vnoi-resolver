@@ -327,7 +327,7 @@ function App() {
   const [loading, setLoading] = useState<boolean>(true);
   const [inputData, setInputData] = useState<InputData | null>(null);
   const [imageData, setImageData] = useState<ImageData>({});
-  const [frozenTime, setFrozenTime] = useState<number>(90);
+  const [frozenTime, setFrozenTime] = useState<number>(240);
   const [unofficialContestants, setUnofficialContestants] = useState<string[]>(
     []
   );
