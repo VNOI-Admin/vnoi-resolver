@@ -80,6 +80,7 @@ type InternalUser = InputUser & {
 };
 
 type InternalState = {
+  shownImage: boolean;
   imageSrc: string | null;
   currentRowIndex: number;
   markedUserId: number;
@@ -289,6 +290,7 @@ export function useResolver({
   const [state, setState, rollback] = useStateWithRollback(() => {
     function processSubmissions(submissions: InputSubmission[]): InternalState {
       const state: InternalState = {
+        shownImage: false,
         imageSrc: null,
         currentRowIndex: inputData.users.length - 1,
         markedUserId: -1,
@@ -387,7 +389,13 @@ export function useResolver({
   );
 
   const step = useCallback(() => {
-    const { imageSrc, currentRowIndex, markedUserId, markedProblemId } = state;
+    const {
+      shownImage,
+      imageSrc,
+      currentRowIndex,
+      markedUserId,
+      markedProblemId
+    } = state;
     if (markedUserId !== data[currentRowIndex]?.userId) {
       setState({
         ...state,
@@ -405,10 +413,23 @@ export function useResolver({
     if (
       !state.users[data[currentRowIndex].userId]?.pendingSubmissionIds?.length
     ) {
-      if (data[currentRowIndex].rank in imageData && imageSrc === null) {
+      if (
+        data[currentRowIndex].rank in imageData &&
+        !shownImage &&
+        imageSrc === null
+      ) {
         setState({
           ...state,
+          shownImage: true,
           imageSrc: imageData[data[currentRowIndex].rank]
+        });
+        return true;
+      }
+
+      if (shownImage && imageSrc !== null) {
+        setState({
+          ...state,
+          imageSrc: null
         });
         return true;
       }
@@ -418,6 +439,7 @@ export function useResolver({
         state.users[markedUserId]?.pendingSubmissionIds ?? [];
       setState({
         ...state,
+        shownImage: false,
         imageSrc: null,
         currentRowIndex: currentRowIndex - 1,
         markedUserId,
