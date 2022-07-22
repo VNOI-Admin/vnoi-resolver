@@ -435,37 +435,45 @@ export function useResolver({
       }
 
       const markedUserId = data[currentRowIndex - 1]?.userId;
-      const nextProblemIds =
-        state.users[markedUserId]?.pendingSubmissionIds ?? [];
+      const nextSubmissionId = _.minBy(
+        state.users[markedUserId].pendingSubmissionIds,
+        (id) => submissionById[id].problemId
+      );
+
       setState({
         ...state,
         shownImage: false,
         imageSrc: null,
         currentRowIndex: currentRowIndex - 1,
         markedUserId,
-        markedProblemId: submissionById[nextProblemIds[0]]?.problemId ?? -1
+        markedProblemId: submissionById[nextSubmissionId ?? 0]?.problemId ?? -1
       });
 
       return true;
     }
 
     if (markedProblemId === -1) {
+      const nextSubmissionId = _.minBy(
+        state.users[markedUserId].pendingSubmissionIds,
+        (id) => submissionById[id].problemId
+      );
+
       setState({
         ...state,
         currentRowIndex,
         markedUserId,
-        markedProblemId:
-          submissionById[state.users[markedUserId].pendingSubmissionIds[0]]
-            .problemId
+        markedProblemId: submissionById[nextSubmissionId ?? 0]?.problemId ?? -1
       });
       return true;
     }
 
-    const submissionId =
-      state.users[data[currentRowIndex].userId].pendingSubmissionIds[0];
+    const nextSubmissionId = _.minBy(
+      state.users[data[currentRowIndex].userId].pendingSubmissionIds,
+      (id) => submissionById[id].problemId
+    );
 
     resolvePendingSubmission({
-      submissionId,
+      submissionId: nextSubmissionId!,
       submissionById,
       pointByProblemId,
       state,
