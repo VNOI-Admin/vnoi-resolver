@@ -95,6 +95,11 @@ export type UserRow = {
   scoreClass: ScoreClassByProblemId;
 };
 
+function round(points: number) {
+  const decimals = 3;
+  return +points.toFixed(decimals);
+}
+
 function getProblemCodeFromIndex(index: number) {
   const ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
   const result = [];
@@ -319,7 +324,7 @@ export function useResolver({
       columns.push({
         id: `problem_${problem.problemId}`,
         header: getProblemCodeFromIndex(index),
-        accessorFn: (row: UserRow) => row.points[problem.problemId],
+        accessorFn: (row: UserRow) => round(row.points[problem.problemId]),
         meta: {
           isProblem: true,
           problemId: problem.problemId,
@@ -331,7 +336,7 @@ export function useResolver({
     columns.push({
       id: 'total',
       header: 'Score',
-      accessorKey: 'total'
+      accessorFn: (row: UserRow) => round(row.total)
     });
 
     columns.push({
