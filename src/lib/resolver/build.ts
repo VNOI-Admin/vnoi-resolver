@@ -137,12 +137,16 @@ export function buildInitialState({
     submissionById
   });
 
-  for (const userId in publicState.users) {
+  // Iterate in defined order — `for..in` on a numeric-keyed object uses
+  // implementation-defined ordering, which makes pending-sub order non-deterministic.
+  for (const { userId } of inputData.users) {
     const publicUser = publicState.users[userId];
     const privateUser = privateState.users[userId];
+    if (!publicUser || !privateUser) continue;
     publicUser.submissionIdsByProblemId = privateUser.submissionIdsByProblemId;
 
-    for (const problemId in problemById) {
+    for (const problem of inputData.problems) {
+      const problemId = problem.problemId;
       if (
         publicUser.lastAlteringScoreSubmissionIdByProblemId[problemId] !==
         privateUser.lastAlteringScoreSubmissionIdByProblemId[problemId]

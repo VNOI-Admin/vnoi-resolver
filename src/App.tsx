@@ -3,34 +3,53 @@ import React, {
   SetStateAction,
   useCallback,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState
 } from 'react';
-import {
-  flexRender,
-  getCoreRowModel,
-  useReactTable
-} from '@tanstack/react-table';
-import { useVirtualizer } from '@tanstack/react-virtual';
 import queryString from 'query-string';
 
 import Select, { MultiValue } from 'react-select';
 
-import Button from 'react-bootstrap/Button';
-import Form from 'react-bootstrap/Form';
-import 'bootstrap/dist/css/bootstrap.min.css';
+import confetti from 'canvas-confetti';
 
 import './App.css';
 import { useKeyPress } from './hooks';
-import {
-  InputData,
-  ImageData,
-  ProblemAttemptStatus,
-  parseInputData,
-  useResolver
-} from './resolver';
+import { InputData, ImageData, parseInputData, useResolver } from './resolver';
+import { Scoreboard } from './canvas/Scoreboard';
+
+const CONFETTI_COLORS = ['#22d3ee', '#4ade80', '#fbbf24', '#f97316', '#a855f7'];
+
+function fireAwardConfetti() {
+  const common = {
+    particleCount: 140,
+    spread: 65,
+    startVelocity: 55,
+    scalar: 1.1,
+    ticks: 240,
+    colors: CONFETTI_COLORS
+  };
+  confetti({ ...common, angle: 60, origin: { x: 0, y: 0.85 } });
+  confetti({ ...common, angle: 120, origin: { x: 1, y: 0.85 } });
+}
+
+function readJsonFile<T>(file: File, parse: (raw: unknown) => T): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const raw = JSON.parse(reader.result as string);
+        resolve(parse(raw));
+      } catch (e) {
+        reject(e instanceof Error ? e : new Error(String(e)));
+      }
+    };
+    reader.onerror = () => reject(new Error('Failed to read file'));
+    reader.readAsText(file);
+  });
+}
+
+type DropKind = 'data' | 'image';
 
 function Loading({
   inputData,
@@ -53,35 +72,62 @@ function Loading({
   setUnofficialContestants: Dispatch<SetStateAction<string[]>>;
   setHideUnofficialContestants: Dispatch<SetStateAction<boolean>>;
 }) {
-  const handleInputChange = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
-      const fileReader = new FileReader();
-      fileReader.onload = () => {
-        const inputData = parseInputData(
-          JSON.parse(fileReader.result as string)
-        );
-        setInputData(inputData);
-      };
-      fileReader.readAsText((e.target as HTMLInputElement).files![0]);
+  const [error, setError] = useState<string | null>(null);
+  const [dragOver, setDragOver] = useState<DropKind | null>(null);
+  const [dataFileName, setDataFileName] = useState<string | null>(null);
+  const [imageFileName, setImageFileName] = useState<string | null>(null);
+
+  const loadData = useCallback(
+    async (file: File) => {
+      setError(null);
+      try {
+        const parsed = await readJsonFile(file, parseInputData);
+        setInputData(parsed);
+        setDataFileName(file.name);
+      } catch (e) {
+        setError(`Couldn't parse data file: ${(e as Error).message}`);
+        setDataFileName(null);
+      }
     },
     [setInputData]
   );
 
-  const handleImageChange = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
-      const fileReader = new FileReader();
-      fileReader.onload = () => {
-        const imageData = JSON.parse(fileReader.result as string) as ImageData;
-        setImageData(imageData);
-      };
-      fileReader.readAsText((e.target as HTMLInputElement).files![0]);
+  const loadImage = useCallback(
+    async (file: File) => {
+      setError(null);
+      try {
+        const parsed = await readJsonFile(file, (raw) => raw as ImageData);
+        setImageData(parsed);
+        setImageFileName(file.name);
+      } catch (e) {
+        setError(`Couldn't parse image file: ${(e as Error).message}`);
+        setImageFileName(null);
+      }
     },
     [setImageData]
   );
 
+  const onDataChange = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const f = e.target.files?.[0];
+      if (f) loadData(f);
+    },
+    [loadData]
+  );
+
+  const onImageChange = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const f = e.target.files?.[0];
+      if (f) loadImage(f);
+    },
+    [loadImage]
+  );
+
   const handleFrozenTimeChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
-      setFrozenTime(parseInt((e.target as HTMLInputElement).value));
+      const raw = (e.target as HTMLInputElement).value;
+      const n = parseInt(raw, 10);
+      setFrozenTime(Math.max(0, Number.isFinite(n) ? n : 0));
     },
     [setFrozenTime]
   );
@@ -113,71 +159,111 @@ function Loading({
     [inputData]
   );
 
+  // Track dragenter/dragleave with a counter — `dragleave` fires on every
+  // child boundary crossing, so the "leave the whole dropzone" event can't be
+  // identified by inspecting `target`. Counting enters vs leaves makes it
+  // robust against hovering over child elements.
+  const dragDepth = useRef<Record<DropKind, number>>({ data: 0, image: 0 });
+  const dropHandlers = useCallback(
+    (kind: DropKind, loader: (f: File) => void) => ({
+      onDragEnter: (e: React.DragEvent) => {
+        e.preventDefault();
+        dragDepth.current[kind] += 1;
+        if (dragDepth.current[kind] === 1) setDragOver(kind);
+      },
+      onDragOver: (e: React.DragEvent) => {
+        e.preventDefault();
+      },
+      onDragLeave: (e: React.DragEvent) => {
+        e.preventDefault();
+        dragDepth.current[kind] = Math.max(0, dragDepth.current[kind] - 1);
+        if (dragDepth.current[kind] === 0) setDragOver(null);
+      },
+      onDrop: (e: React.DragEvent) => {
+        e.preventDefault();
+        dragDepth.current[kind] = 0;
+        setDragOver(null);
+        const f = e.dataTransfer.files?.[0];
+        if (f) loader(f);
+      }
+    }),
+    []
+  );
+
   return (
-    <Form className="w-50 mt-5 mx-auto">
-      <Form.Group className="mb-3">
-        <Form.Label>Data</Form.Label>
-        <Form.Control type="file" onChange={handleInputChange} />
-      </Form.Group>
-      <Form.Group className="mb-3">
-        <Form.Label>Image</Form.Label>
-        <Form.Control type="file" onChange={handleImageChange} />
-      </Form.Group>
-      <Form.Group className="mb-3">
-        <Form.Label>Frozen time (since start of contest)</Form.Label>
-        <Form.Control
+    <form className="loading-form" onSubmit={(e) => e.preventDefault()}>
+      <span className="subtitle">Contest reveal · press H for shortcuts</span>
+      <div
+        className={`form-group dropzone${dragOver === 'data' ? ' drag-over' : ''}${dataFileName ? ' has-file' : ''}`}
+        {...dropHandlers('data', loadData)}
+      >
+        <label htmlFor="data-input">Data</label>
+        <input id="data-input" type="file" onChange={onDataChange} />
+        {dataFileName && (
+          <span className="file-name" title={dataFileName}>
+            {dataFileName}
+          </span>
+        )}
+        <span className="dropzone-hint">or drop a .json file here</span>
+      </div>
+      <div
+        className={`form-group dropzone${dragOver === 'image' ? ' drag-over' : ''}${imageFileName ? ' has-file' : ''}`}
+        {...dropHandlers('image', loadImage)}
+      >
+        <label htmlFor="image-input">Image</label>
+        <input id="image-input" type="file" onChange={onImageChange} />
+        {imageFileName && (
+          <span className="file-name" title={imageFileName}>
+            {imageFileName}
+          </span>
+        )}
+        <span className="dropzone-hint">or drop a .json file here</span>
+      </div>
+      <div className="form-group">
+        <label htmlFor="frozen-input">
+          Frozen time (since start of contest)
+        </label>
+        <input
+          id="frozen-input"
           type="number"
           value={frozenTime}
           onChange={handleFrozenTimeChange}
         />
-      </Form.Group>{' '}
-      <Form.Group className="mb-3 ">
+      </div>
+      <div className="form-group">
         <Select
           placeholder="Unofficial contestants"
           options={usernames}
           isMulti={true}
+          closeMenuOnSelect={false}
+          hideSelectedOptions={false}
           onChange={handleSelectChange}
         />
-      </Form.Group>
-      <Form.Group className="mb-3">
-        <Form.Check
+      </div>
+      <div className="form-group form-check">
+        <input
+          id="hide-unofficial"
           type="checkbox"
-          label="Hide unofficial contestants"
           checked={hideUnofficialContestants}
           onChange={handleCheckboxChange}
         />
-      </Form.Group>
-      <Button variant="primary" disabled={!inputData} onClick={handleSubmit}>
+        <label htmlFor="hide-unofficial">Hide unofficial contestants</label>
+      </div>
+      {error && (
+        <div className="error-toast" role="alert">
+          {error}
+        </div>
+      )}
+      <button
+        type="button"
+        className="primary"
+        disabled={!inputData}
+        onClick={handleSubmit}
+      >
         Run
-      </Button>
-    </Form>
+      </button>
+    </form>
   );
-}
-
-const ROW_HEIGHT = 50;
-const SCROLL_DURATION = 500;
-
-// Manual rAF-based smooth scroll. `element.scrollTo({behavior: 'smooth'})` is
-// suppressed in some environments (headless / reduced-motion / certain iframes),
-// so we drive scrollTop ourselves.
-function animateScroll(
-  el: HTMLElement,
-  target: number,
-  cancelRef: { id: number | null }
-) {
-  if (cancelRef.id !== null) cancelAnimationFrame(cancelRef.id);
-  const start = el.scrollTop;
-  const delta = target - start;
-  if (delta === 0) return;
-  const t0 = performance.now();
-  const ease = (t: number) => 1 - Math.pow(1 - t, 3); // easeOutCubic
-  const tick = (now: number) => {
-    const t = Math.min(1, (now - t0) / SCROLL_DURATION);
-    el.scrollTop = start + delta * ease(t);
-    if (t < 1) cancelRef.id = requestAnimationFrame(tick);
-    else cancelRef.id = null;
-  };
-  cancelRef.id = requestAnimationFrame(tick);
 }
 
 function Ranking({
@@ -207,7 +293,6 @@ function Ranking({
   );
 
   const {
-    columns,
     data,
     currentRowIndex,
     markedUserId,
@@ -222,206 +307,144 @@ function Ranking({
     frozenTime: frozenTime * 60
   });
 
-  const table = useReactTable({
-    columns,
-    data,
-    getCoreRowModel: getCoreRowModel()
-  });
+  const [playing, setPlaying] = useState(false);
+  const [speed, setSpeed] = useState(1); // steps per second
+  const [showControls, setShowControls] = useState(false);
+  const [showHelp, setShowHelp] = useState(false);
 
-  const parentRef = useRef<HTMLDivElement>(null);
-  const rowEls = useRef<Map<number, HTMLDivElement>>(new Map());
-  const prevPositions = useRef<Map<number, number>>(new Map());
-  const scrollRaf = useRef<{ id: number | null }>({ id: null });
+  // Pause autoplay on any manual keypress so user can take over instantly.
+  const pause = useCallback(() => setPlaying(false), []);
+  const manualStep = useCallback(
+    (choice?: number) => {
+      pause();
+      step(choice);
+    },
+    [pause, step]
+  );
+  const manualRollback = useCallback(() => {
+    pause();
+    rollback();
+  }, [pause, rollback]);
 
-  const rowVirtualizer = useVirtualizer({
-    count: data.length,
-    getScrollElement: () => parentRef.current,
-    estimateSize: () => ROW_HEIGHT,
-    overscan: 10,
-    getItemKey: (index) => data[index].userId
-  });
+  // All non-Escape shortcuts are gated on `!showHelp` so they don't reach
+  // through the modal. Escape stays active so it can close the modal.
+  const shortcutsEnabled = !showHelp;
+  useKeyPress('ArrowLeft', manualRollback, shortcutsEnabled);
+  useKeyPress('ArrowRight', manualStep, shortcutsEnabled);
+  useKeyPress('1', () => manualStep(0), shortcutsEnabled);
+  useKeyPress('2', () => manualStep(1), shortcutsEnabled);
+  useKeyPress('3', () => manualStep(2), shortcutsEnabled);
+  useKeyPress('4', () => manualStep(3), shortcutsEnabled);
+  useKeyPress('5', () => manualStep(4), shortcutsEnabled);
+  useKeyPress('6', () => manualStep(5), shortcutsEnabled);
+  useKeyPress('7', () => manualStep(6), shortcutsEnabled);
+  useKeyPress('8', () => manualStep(7), shortcutsEnabled);
+  useKeyPress('9', () => manualStep(8), shortcutsEnabled);
+  useKeyPress(' ', () => setPlaying((p) => !p), shortcutsEnabled);
+  useKeyPress('c', () => setShowControls((s) => !s), shortcutsEnabled);
+  useKeyPress('h', () => setShowHelp((s) => !s), shortcutsEnabled);
+  useKeyPress('Escape', () => setShowHelp(false));
 
-  const virtualItems = rowVirtualizer.getVirtualItems();
-
-  // FLIP: animate row reorder via Web Animations API
-  useLayoutEffect(() => {
-    const newPositions = new Map<number, number>();
-    data.forEach((row, index) => {
-      newPositions.set(row.userId, index * ROW_HEIGHT);
-    });
-
-    for (const vItem of virtualItems) {
-      const userId = data[vItem.index].userId;
-      const oldY = prevPositions.current.get(userId);
-      const newY = newPositions.get(userId)!;
-      if (oldY === undefined || oldY === newY) continue;
-
-      const el = rowEls.current.get(userId);
-      if (!el) continue;
-
-      el.animate(
-        [
-          { transform: `translateY(${oldY}px)` },
-          { transform: `translateY(${newY}px)` }
-        ],
-        { duration: 700, easing: 'cubic-bezier(0.22, 1, 0.36, 1)' }
-      );
-    }
-
-    prevPositions.current = newPositions;
-  }, [data, virtualItems]);
-
-  // Keep the floor cursor in view (event-driven; replaces 50ms setInterval).
-  // Fires on every dispatch (data identity changes), so re-marks that don't
-  // change currentRowIndex still trigger a scroll re-check.
+  // Auto-pause when the reveal finishes.
   useEffect(() => {
-    const el = parentRef.current;
-    if (!el || currentRowIndex < 0) return;
-    // The sticky header is in-flow above the body, so its height contributes to
-    // scrollTop coordinates. Read it at runtime so we don't hard-code it.
-    const header = el.querySelector('.ranking-header') as HTMLElement | null;
-    const headerHeight = header?.offsetHeight ?? 0;
-    const targetBottom = headerHeight + (currentRowIndex + 1) * ROW_HEIGHT;
-    const target = Math.max(0, targetBottom - el.clientHeight);
-    animateScroll(el, target, scrollRaf.current);
-  }, [currentRowIndex, data]);
+    if (currentRowIndex < 0 && playing) setPlaying(false);
+  }, [currentRowIndex, playing]);
 
-  useKeyPress(',', rollback);
-  useKeyPress('.', step);
-  useKeyPress('1', () => step(0));
-  useKeyPress('2', () => step(1));
-  useKeyPress('3', () => step(2));
-  useKeyPress('4', () => step(3));
-  useKeyPress('5', () => step(4));
-  useKeyPress('6', () => step(5));
-  useKeyPress('7', () => step(6));
-  useKeyPress('8', () => step(7));
-  useKeyPress('9', () => step(8));
+  // Confetti the first time we see each award image. Rolling back past an
+  // award and re-stepping forward won't re-fire on the same image.
+  const celebrated = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (imageSrc !== null && !celebrated.current.has(imageSrc)) {
+      celebrated.current.add(imageSrc);
+      fireAwardConfetti();
+    }
+  }, [imageSrc]);
+
+  // Keep a live ref to step so the autoplay interval below doesn't tear down
+  // and rebuild every time a dispatch updates `step`'s identity (it depends on
+  // `data`, which changes on every event). Without this, at high speeds the
+  // interval can effectively halve as it's cleared just before firing.
+  const stepRef = useRef(step);
+  useEffect(() => {
+    stepRef.current = step;
+  }, [step]);
+
+  // Autoplay loop. Suspended while help overlay is open.
+  useEffect(() => {
+    if (!playing || showHelp) return;
+    const id = setInterval(() => stepRef.current(), 1000 / speed);
+    return () => clearInterval(id);
+  }, [playing, showHelp, speed]);
 
   return (
     <>
-      <div
-        ref={parentRef}
-        className="ranking"
-        style={
-          {
-            '--problems': inputData.problems.length
-          } as React.CSSProperties
-        }
-      >
-        <div className="ranking-header">
-          {table.getHeaderGroups().map((headerGroup) =>
-            headerGroup.headers.map((header) => {
-              const isProblem = !!header.column.columnDef.meta?.isProblem;
-              return (
-                <div className="ranking-cell" key={header.id}>
-                  {header.isPlaceholder
-                    ? null
-                    : flexRender(
-                        header.column.columnDef.header,
-                        header.getContext()
-                      )}
-                  {isProblem && (
-                    <div className="point-denominator">
-                      {header.column.columnDef.meta!.points}
-                    </div>
-                  )}
-                </div>
-              );
-            })
-          )}
-        </div>
-        <div
-          className="ranking-body"
-          style={{ height: rowVirtualizer.getTotalSize() }}
-        >
-          {virtualItems.map((vItem) => {
-            const row = table.getRowModel().rows[vItem.index];
-            const userId = row.original.userId;
-            const isCurrent = userId === markedUserId;
-            return (
-              <div
-                ref={(el) => {
-                  if (el) rowEls.current.set(userId, el);
-                  else rowEls.current.delete(userId);
-                }}
-                key={userId}
-                className={`ranking-row${isCurrent ? ' current-row' : ''}`}
-                data-stripe={vItem.index % 2 === 0 ? 'even' : 'odd'}
-                style={{ transform: `translateY(${vItem.start}px)` }}
-              >
-                {row.getVisibleCells().map((cell) => {
-                  if (
-                    cell.column.columnDef.id === 'rank' ||
-                    cell.column.columnDef.id === 'total'
-                  ) {
-                    return (
-                      <div key={cell.id} className="ranking-cell user-points">
-                        {flexRender(
-                          cell.column.columnDef.cell,
-                          cell.getContext()
-                        )}
-                      </div>
-                    );
-                  }
-
-                  if (cell.column.columnDef.id === 'penalty') {
-                    return (
-                      <div key={cell.id} className="ranking-cell">
-                        {flexRender(
-                          cell.column.columnDef.cell,
-                          cell.getContext()
-                        )}
-                      </div>
-                    );
-                  }
-
-                  if (cell.column.columnDef.id === 'name') {
-                    const { fullName, username } = cell.getValue() as {
-                      fullName: string;
-                      username: string;
-                    };
-                    return (
-                      <div key={cell.id} className="ranking-cell name-cell">
-                        <b>{fullName}</b>
-                        &nbsp;({username})
-                      </div>
-                    );
-                  }
-
-                  const problemId = cell.column.columnDef.meta!.problemId!;
-                  const submissionPoints = cell.getValue() as number;
-                  const status = row.original.status[problemId];
-                  const scoreClass = row.original.scoreClass[problemId];
-                  const isPending = !!(status & ProblemAttemptStatus.PENDING);
-                  let pillClass =
-                    'score-cell ' + (isPending ? 'score_pending' : scoreClass);
-
-                  if (
-                    isCurrent &&
-                    cell.column.id === `problem_${markedProblemId}`
-                  ) {
-                    pillClass += ' highlighted-cell';
-                  }
-
-                  return (
-                    <div key={cell.id} className="ranking-cell">
-                      <div className={pillClass}>
-                        {status !== ProblemAttemptStatus.UNATTEMPTED &&
-                          submissionPoints}
-                        {isPending && <span>?</span>}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            );
-          })}
-        </div>
-      </div>
+      <Scoreboard
+        data={data}
+        problems={inputData.problems}
+        currentRowIndex={currentRowIndex}
+        markedUserId={markedUserId}
+        markedProblemId={markedProblemId}
+      />
       {imageSrc !== null && (
         <div className="award-overlay">
           <img src={imageSrc} alt="" />
+        </div>
+      )}
+      {showHelp && (
+        <div className="help-overlay" onClick={() => setShowHelp(false)}>
+          <div className="help-card" onClick={(e) => e.stopPropagation()}>
+            <h2>Keyboard shortcuts</h2>
+            <dl>
+              <dt>
+                <kbd>→</kbd>
+              </dt>
+              <dd>Step forward</dd>
+              <dt>
+                <kbd>←</kbd>
+              </dt>
+              <dd>Step back</dd>
+              <dt>
+                <kbd>1</kbd>–<kbd>9</kbd>
+              </dt>
+              <dd>Reveal the N-th pending submission for the current user</dd>
+              <dt>
+                <kbd>Space</kbd>
+              </dt>
+              <dd>Play / pause autoplay</dd>
+              <dt>
+                <kbd>C</kbd>
+              </dt>
+              <dd>Toggle autoplay controls</dd>
+              <dt>
+                <kbd>H</kbd>
+              </dt>
+              <dd>Toggle this help</dd>
+            </dl>
+            <p className="hint">Click anywhere or press Esc to close.</p>
+          </div>
+        </div>
+      )}
+      {showControls && (
+        <div className="controls">
+          <button
+            type="button"
+            className="play-btn"
+            onClick={() => setPlaying((p) => !p)}
+            aria-label={playing ? 'Pause' : 'Play'}
+          >
+            {playing ? '❚❚' : '▶'}
+          </button>
+          <label className="speed">
+            <span>{speed.toFixed(1)}×</span>
+            <input
+              type="range"
+              min={0.2}
+              max={5}
+              step={0.1}
+              value={speed}
+              onChange={(e) => setSpeed(parseFloat(e.target.value))}
+            />
+          </label>
         </div>
       )}
     </>
@@ -438,6 +461,18 @@ function App() {
   );
   const [hideUnofficialContestants, setHideUnofficialContestants] =
     useState(true);
+
+  // Bump a version every time the contest dataset identity changes. Used as a
+  // remount key on <Ranking> so its useReducer re-initialises from the new
+  // base state. (useReducer's init fn only runs once per instance.)
+  const dataVersionRef = useRef({ data: inputData, version: 0 });
+  if (dataVersionRef.current.data !== inputData) {
+    dataVersionRef.current = {
+      data: inputData,
+      version: dataVersionRef.current.version + 1
+    };
+  }
+  const dataVersion = dataVersionRef.current.version;
 
   useEffect(() => {
     const load = async () => {
@@ -471,6 +506,7 @@ function App() {
         />
       ) : (
         <Ranking
+          key={dataVersion}
           inputData={inputData}
           imageData={imageData}
           frozenTime={frozenTime}

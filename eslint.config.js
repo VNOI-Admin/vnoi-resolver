@@ -25,7 +25,7 @@ export default tseslint.config(
       ecmaVersion: 2022,
       globals: { ...globals.browser, ...globals.node }
     },
-    settings: { react: { version: '18.3' } },
+    settings: { react: { version: 'detect' } },
     plugins: {
       react,
       'react-hooks': reactHooks,
@@ -41,6 +41,23 @@ export default tseslint.config(
         { allowConstantExport: true }
       ],
       'react/prop-types': 'off',
+      // Pixi React uses JSX elements like <pixiContainer> with props (draw, text,
+      // anchor, etc.) that eslint-plugin-react doesn't know about. They're valid.
+      'react/no-unknown-property': [
+        'error',
+        {
+          ignore: [
+            'draw',
+            'text',
+            'anchor',
+            'mask',
+            'tint',
+            'pivot',
+            'sortableChildren',
+            'alpha'
+          ]
+        }
+      ],
       'no-unused-vars': 'off',
       '@typescript-eslint/no-unused-vars': [
         'warn',

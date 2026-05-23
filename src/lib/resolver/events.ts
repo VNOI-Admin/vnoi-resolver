@@ -50,8 +50,17 @@ export function applyEvent(
         imageSrc: null
       };
 
-    case 'mark_problem':
-      return { ...state, markedProblemId: event.problemId };
+    case 'mark_problem': {
+      // Validate: the user must actually have a pending submission whose
+      // problem matches. Otherwise computeNextEvent would stall on this state.
+      const user = state.users[event.userId];
+      const valid =
+        user &&
+        user.pendingSubmissionIds.some(
+          (id) => ctx.submissionById[id].problemId === event.problemId
+        );
+      return { ...state, markedProblemId: valid ? event.problemId : -1 };
+    }
 
     case 'resolve': {
       const submission = ctx.submissionById[event.submissionId];
@@ -68,6 +77,9 @@ export function applyEvent(
       return { ...state, shownImage: true, imageSrc: event.imageSrc };
 
     case 'hide_award':
+      // shownImage stays true until the next mark_user — it's a "we've already
+      // shown the award for the current user" guard that prevents
+      // computeNextEvent from looping show/hide forever.
       return { ...state, imageSrc: null };
 
     case 'end':

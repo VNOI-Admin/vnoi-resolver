@@ -13,8 +13,7 @@ export default defineConfig({
     open: true
   },
   test: {
-    environment: 'jsdom',
-    setupFiles: ['./src/setupTests.ts'],
+    environment: 'node',
     include: ['src/**/*.{test,spec}.{ts,tsx}']
   }
 });

@@ -1,5 +1,4 @@
 import { useCallback, useMemo, useReducer } from 'react';
-import { ColumnDef } from '@tanstack/react-table';
 import _ from 'lodash';
 
 import {
@@ -14,13 +13,12 @@ import {
   applyEvent,
   buildInitialState,
   computeNextEvent,
-  getProblemCodeFromIndex,
   rankUsers,
   replay
 } from './lib/resolver';
 
-export { ProblemAttemptStatus, parseInputData } from './lib/resolver';
-export type { ImageData, InputData, ResolverEvent } from './lib/resolver';
+export { parseInputData } from './lib/resolver';
+export type { ImageData, InputData } from './lib/resolver';
 
 type SimState = {
   base: InternalState;
@@ -32,21 +30,21 @@ type ReducerCtx = {
   submissionById: SubmissionById;
   pointByProblemId: PointByProblemId;
   imageData: ImageData;
+  unofficialContestants: string[];
 };
 
 type Action =
-  | { type: 'step'; choice: number | undefined; ranking: UserRow[] }
+  | { type: 'step'; choice: number | undefined }
   | { type: 'rollback' };
 
 function makeReducer(ctx: ReducerCtx) {
   return (state: SimState, action: Action): SimState => {
     if (action.type === 'step') {
-      const next = computeNextEvent(
-        state.current,
-        action.ranking,
-        ctx,
-        action.choice
-      );
+      // Rank from the latest state inside the reducer — if multiple `step`
+      // calls dispatch in the same event tick, each one sees the live ranking
+      // produced by the previous dispatch.
+      const ranking = rankUsers(state.current, ctx.unofficialContestants);
+      const next = computeNextEvent(state.current, ranking, ctx, action.choice);
       if (!next) return state;
       return {
         base: state.base,
@@ -75,7 +73,6 @@ export function useResolver({
   unofficialContestants: string[];
   frozenTime: number;
 }): {
-  columns: ColumnDef<UserRow>[];
   data: UserRow[];
   currentRowIndex: number;
   markedUserId: number;
@@ -111,56 +108,15 @@ export function useResolver({
     [inputData.problems]
   );
 
-  const columns = useMemo(() => {
-    const columns: ColumnDef<UserRow>[] = [];
-
-    columns.push({
-      id: 'rank',
-      header: 'Rank',
-      accessorKey: 'rank'
-    });
-
-    columns.push({
-      id: 'name',
-      header: 'Name',
-      accessorFn: (row: UserRow) => ({
-        fullName: row.fullName,
-        username: row.username
-      })
-    });
-
-    inputData.problems.forEach((problem, index) => {
-      columns.push({
-        id: `problem_${problem.problemId}`,
-        header: getProblemCodeFromIndex(index),
-        accessorFn: (row: UserRow) => row.points[problem.problemId],
-        meta: {
-          isProblem: true,
-          problemId: problem.problemId,
-          points: problem.points
-        }
-      });
-    });
-
-    columns.push({
-      id: 'total',
-      header: 'Score',
-      accessorKey: 'total'
-    });
-
-    columns.push({
-      id: 'penalty',
-      header: 'Time',
-      accessorFn: (row) =>
-        new Date(row.penalty * 1000).toISOString().substring(11, 19)
-    });
-
-    return columns;
-  }, [inputData.problems]);
-
   const reducer = useMemo(
-    () => makeReducer({ submissionById, pointByProblemId, imageData }),
-    [submissionById, pointByProblemId, imageData]
+    () =>
+      makeReducer({
+        submissionById,
+        pointByProblemId,
+        imageData,
+        unofficialContestants
+      }),
+    [submissionById, pointByProblemId, imageData, unofficialContestants]
   );
 
   const [sim, dispatch] = useReducer(
@@ -177,17 +133,16 @@ export function useResolver({
     [sim, unofficialContestants]
   );
 
+  // step has stable identity now — no `data` dep. The autoplay interval and
+  // keypress handlers don't churn between dispatches.
   const step = useCallback(
-    (choice?: number) => {
-      dispatch({ type: 'step', choice, ranking: data });
-    },
-    [data]
+    (choice?: number) => dispatch({ type: 'step', choice }),
+    []
   );
 
   const rollback = useCallback(() => dispatch({ type: 'rollback' }), []);
 
   return {
-    columns,
     data,
     currentRowIndex: sim.current.currentRowIndex,
     markedUserId: sim.current.markedUserId,

@@ -5,8 +5,11 @@ export function rankUsers(
   state: InternalState,
   unofficialContestants: string[]
 ): UserRow[] {
+  // Pre-sort by userId so the {total, penalty} tie-break in _.orderBy is
+  // deterministic even on engines whose numeric-key iteration order differs.
+  const sortedUsers = _.sortBy(_.values(state.users), 'userId');
   const rows = _.orderBy(
-    _.values(state.users).map((user) => {
+    sortedUsers.map((user) => {
       const total = _.sum(_.values(user.points));
       return { ...user, total, rank: '' };
     }),
