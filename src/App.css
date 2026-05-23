@@ -13,110 +13,170 @@ body {
   height: 100%;
 }
 
-img {
-  display: block;
-  height: auto;
-  width: 100%;
+/* Virtualized scoreboard --------------------------------------------------- */
+
+.ranking {
+  height: 100%;
+  overflow-y: auto;
+  background: white;
 }
 
-.ranking-table thead th {
+.ranking-header,
+.ranking-row {
+  display: grid;
+  grid-template-columns: 80px minmax(240px, 1fr) repeat(
+      var(--problems, 0),
+      90px
+    ) 100px 110px;
+  align-items: center;
+  height: 50px;
+}
+
+.ranking-header {
   position: sticky;
   top: 0;
-  z-index: 99999;
+  z-index: 10;
+  background: white;
+  font-weight: bold;
+  border-bottom: 2px solid #dee2e6;
 }
 
-.ranking-table th,
-.ranking-table tr,
-.ranking-table td {
-  height: 50px;
+.ranking-body {
+  position: relative;
+}
+
+.ranking-row {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  border-bottom: 1px solid #dee2e6;
+  will-change: transform;
+}
+
+.ranking-row[data-stripe='odd'] {
+  background: rgba(0, 0, 0, 0.05);
+}
+
+.ranking-row.current-row,
+.ranking-row.current-row[data-stripe='odd'] {
+  background: #ced4da;
+  z-index: 5;
+}
+
+.ranking-cell {
   text-align: center;
-  vertical-align: middle;
+  padding: 0 8px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.name-cell {
+  text-align: left;
 }
 
 .point-denominator {
   font-size: 0.7em;
+  opacity: 0.7;
 }
 
 .user-points {
   font-weight: bold;
   color: black;
-  width: 70px;
 }
 
-.current-row td {
-  background-color: #ced4da;
-}
-
-.highlighted-cell {
-  border: 4px solid #000000;
-  animation: blinker 1s linear infinite;
-}
-
-@keyframes blinker {
-  50% {
-    border-color: #ffffff00;
-  }
-}
+/* Score pills -------------------------------------------------------------- */
 
 .score-cell {
   display: flex;
   align-items: center;
   justify-content: center;
   height: 30px;
-  width: 70px;
+  margin: 0 8px;
   border-radius: 10px;
   font-weight: bold;
   opacity: 0.9;
 }
 
+.highlighted-cell {
+  border: 4px solid #000;
+  animation: blinker 1s linear infinite;
+}
+
+@keyframes blinker {
+  50% {
+    border-color: transparent;
+  }
+}
+
 .score_pending {
-  background-color: #6666ff !important;
+  background-color: #6666ff;
 }
 
 .score_0 {
-  background-color: #f40000 !important;
+  background-color: #f40000;
 }
 
 .score_0_10 {
-  background-color: #eb1d00 !important;
+  background-color: #eb1d00;
 }
 
 .score_10_20 {
-  background-color: #e23a00 !important;
+  background-color: #e23a00;
 }
 
 .score_20_30 {
-  background-color: #d95700 !important;
+  background-color: #d95700;
 }
 
 .score_30_40 {
-  background-color: #d17400 !important;
+  background-color: #d17400;
 }
 
 .score_40_50 {
-  background-color: #c89100 !important;
+  background-color: #c89100;
 }
 
 .score_50_60 {
-  background-color: #b99f00 !important;
+  background-color: #b99f00;
 }
 
 .score_60_70 {
-  background-color: #a39e01 !important;
+  background-color: #a39e01;
 }
 
 .score_70_80 {
-  background-color: #8e9d02 !important;
+  background-color: #8e9d02;
 }
 
 .score_80_90 {
-  background-color: #789c03 !important;
+  background-color: #789c03;
 }
 
 .score_90_100 {
-  background-color: #639b04 !important;
+  background-color: #639b04;
 }
 
 .score_100 {
-  background-color: #4e9a05 !important;
+  background-color: #4e9a05;
+}
+
+/* Award reveal ------------------------------------------------------------- */
+
+.award-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.65);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.award-overlay img {
+  width: 100%;
+  height: 100%;
+  object-fit: fill;
+  display: block;
 }

@@ -3,7 +3,9 @@ import React, {
   SetStateAction,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
+  useRef,
   useState
 } from 'react';
 import {
@@ -11,14 +13,13 @@ import {
   getCoreRowModel,
   useReactTable
 } from '@tanstack/react-table';
-import { motion, Target } from 'framer-motion';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import queryString from 'query-string';
 
 import Select, { MultiValue } from 'react-select';
 
 import Button from 'react-bootstrap/Button';
 import Form from 'react-bootstrap/Form';
-import Table from 'react-bootstrap/Table';
 import 'bootstrap/dist/css/bootstrap.min.css';
 
 import './App.css';
@@ -153,6 +154,32 @@ function Loading({
   );
 }
 
+const ROW_HEIGHT = 50;
+const SCROLL_DURATION = 500;
+
+// Manual rAF-based smooth scroll. `element.scrollTo({behavior: 'smooth'})` is
+// suppressed in some environments (headless / reduced-motion / certain iframes),
+// so we drive scrollTop ourselves.
+function animateScroll(
+  el: HTMLElement,
+  target: number,
+  cancelRef: { id: number | null }
+) {
+  if (cancelRef.id !== null) cancelAnimationFrame(cancelRef.id);
+  const start = el.scrollTop;
+  const delta = target - start;
+  if (delta === 0) return;
+  const t0 = performance.now();
+  const ease = (t: number) => 1 - Math.pow(1 - t, 3); // easeOutCubic
+  const tick = (now: number) => {
+    const t = Math.min(1, (now - t0) / SCROLL_DURATION);
+    el.scrollTop = start + delta * ease(t);
+    if (t < 1) cancelRef.id = requestAnimationFrame(tick);
+    else cancelRef.id = null;
+  };
+  cancelRef.id = requestAnimationFrame(tick);
+}
+
 function Ranking({
   inputData,
   imageData,
@@ -201,17 +228,63 @@ function Ranking({
     getCoreRowModel: getCoreRowModel()
   });
 
-  const spring = React.useMemo(
-    () => ({
-      type: 'spring',
-      bounce: 0,
-      damping: 30,
-      stiffness: 100
-    }),
-    []
-  );
+  const parentRef = useRef<HTMLDivElement>(null);
+  const rowEls = useRef<Map<number, HTMLDivElement>>(new Map());
+  const prevPositions = useRef<Map<number, number>>(new Map());
+  const scrollRaf = useRef<{ id: number | null }>({ id: null });
 
-  const scrollRowIndex = Math.max(0, currentRowIndex - 12);
+  const rowVirtualizer = useVirtualizer({
+    count: data.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => ROW_HEIGHT,
+    overscan: 10,
+    getItemKey: (index) => data[index].userId
+  });
+
+  const virtualItems = rowVirtualizer.getVirtualItems();
+
+  // FLIP: animate row reorder via Web Animations API
+  useLayoutEffect(() => {
+    const newPositions = new Map<number, number>();
+    data.forEach((row, index) => {
+      newPositions.set(row.userId, index * ROW_HEIGHT);
+    });
+
+    for (const vItem of virtualItems) {
+      const userId = data[vItem.index].userId;
+      const oldY = prevPositions.current.get(userId);
+      const newY = newPositions.get(userId)!;
+      if (oldY === undefined || oldY === newY) continue;
+
+      const el = rowEls.current.get(userId);
+      if (!el) continue;
+
+      el.animate(
+        [
+          { transform: `translateY(${oldY}px)` },
+          { transform: `translateY(${newY}px)` }
+        ],
+        { duration: 700, easing: 'cubic-bezier(0.22, 1, 0.36, 1)' }
+      );
+    }
+
+    prevPositions.current = newPositions;
+  }, [data, virtualItems]);
+
+  // Keep the floor cursor in view (event-driven; replaces 50ms setInterval).
+  // Fires on every dispatch (data identity changes), so re-marks that don't
+  // change currentRowIndex still trigger a scroll re-check.
+  useEffect(() => {
+    const el = parentRef.current;
+    if (!el || currentRowIndex < 0) return;
+    // The sticky header is in-flow above the body, so its height contributes to
+    // scrollTop coordinates. Read it at runtime so we don't hard-code it.
+    const header = el.querySelector('.ranking-header') as HTMLElement | null;
+    const headerHeight = header?.offsetHeight ?? 0;
+    const targetBottom = headerHeight + (currentRowIndex + 1) * ROW_HEIGHT;
+    const target = Math.max(0, targetBottom - el.clientHeight);
+    animateScroll(el, target, scrollRaf.current);
+  }, [currentRowIndex, data]);
 
   useKeyPress(',', rollback);
   useKeyPress('.', step);
@@ -225,84 +298,57 @@ function Ranking({
   useKeyPress('8', () => step(7));
   useKeyPress('9', () => step(8));
 
-  useEffect(() => {
-    const interval = setInterval(() => {
-      if (currentRowIndex === data.length - 1) {
-        document.getElementById('end-row')?.scrollIntoView({
-          behavior: 'smooth',
-          block: 'nearest',
-          inline: 'start'
-        });
-      } else if (currentRowIndex < 12) {
-        window.scrollTo({
-          top: 0,
-          behavior: 'smooth'
-        });
-      } else {
-        document.getElementById('scroll-row')?.scrollIntoView({
-          behavior: 'smooth',
-          block: 'nearest',
-          inline: 'start'
-        });
-      }
-    }, 50);
-    return () => clearInterval(interval);
-  });
-
-  if (imageSrc !== null) {
-    return (
-      <div className="d-flex align-items-center h-100">
-        <img className="mx-auto" src={imageSrc} alt="" />;
-      </div>
-    );
-  }
-
   return (
     <>
-      <Table striped className="ranking-table">
-        <thead>
-          {table.getHeaderGroups().map((headerGroup) => (
-            <tr key={headerGroup.id}>
-              {headerGroup.headers.map((header) => {
-                const isProblem = !!header.column.columnDef.meta?.isProblem;
-                return (
-                  <th key={header.id} colSpan={header.colSpan}>
-                    {header.isPlaceholder
-                      ? null
-                      : flexRender(
-                          header.column.columnDef.header,
-                          header.getContext()
-                        )}
-                    {isProblem && (
-                      <div className="point-denominator">
-                        {header.column.columnDef.meta!.points}
-                      </div>
-                    )}
-                  </th>
-                );
-              })}
-            </tr>
-          ))}
-        </thead>
-        <tbody>
-          {table.getRowModel().rows.map((row, ind) => {
-            let className = '';
-            const animate = {} as Target;
-            if (row.original.userId === markedUserId) {
-              className = 'current-row';
-              animate.position = 'relative';
-              animate.zIndex = 999;
-            }
-
+      <div
+        ref={parentRef}
+        className="ranking"
+        style={
+          {
+            '--problems': inputData.problems.length
+          } as React.CSSProperties
+        }
+      >
+        <div className="ranking-header">
+          {table.getHeaderGroups().map((headerGroup) =>
+            headerGroup.headers.map((header) => {
+              const isProblem = !!header.column.columnDef.meta?.isProblem;
+              return (
+                <div className="ranking-cell" key={header.id}>
+                  {header.isPlaceholder
+                    ? null
+                    : flexRender(
+                        header.column.columnDef.header,
+                        header.getContext()
+                      )}
+                  {isProblem && (
+                    <div className="point-denominator">
+                      {header.column.columnDef.meta!.points}
+                    </div>
+                  )}
+                </div>
+              );
+            })
+          )}
+        </div>
+        <div
+          className="ranking-body"
+          style={{ height: rowVirtualizer.getTotalSize() }}
+        >
+          {virtualItems.map((vItem) => {
+            const row = table.getRowModel().rows[vItem.index];
+            const userId = row.original.userId;
+            const isCurrent = userId === markedUserId;
             return (
-              <motion.tr
-                className={className}
-                animate={animate}
-                key={row.original.userId}
-                transition={spring}
-                layout
-                {...(ind === scrollRowIndex ? { id: 'scroll-row' } : {})}
-                {...(ind === data.length - 1 ? { id: 'end-row' } : {})}
+              <div
+                ref={(el) => {
+                  if (el) rowEls.current.set(userId, el);
+                  else rowEls.current.delete(userId);
+                }}
+                key={userId}
+                className={`ranking-row${isCurrent ? ' current-row' : ''}`}
+                data-stripe={vItem.index % 2 === 0 ? 'even' : 'odd'}
+                style={{ transform: `translateY(${vItem.start}px)` }}
               >
                 {row.getVisibleCells().map((cell) => {
                   if (
@@ -310,23 +356,23 @@ function Ranking({
                     cell.column.columnDef.id === 'total'
                   ) {
                     return (
-                      <td key={cell.id} className={'user-points'}>
+                      <div key={cell.id} className="ranking-cell user-points">
                         {flexRender(
                           cell.column.columnDef.cell,
                           cell.getContext()
                         )}
-                      </td>
+                      </div>
                     );
                   }
 
                   if (cell.column.columnDef.id === 'penalty') {
                     return (
-                      <td key={cell.id}>
+                      <div key={cell.id} className="ranking-cell">
                         {flexRender(
                           cell.column.columnDef.cell,
                           cell.getContext()
                         )}
-                      </td>
+                      </div>
                     );
                   }
 
@@ -336,43 +382,48 @@ function Ranking({
                       username: string;
                     };
                     return (
-                      <td key={cell.id}>
+                      <div key={cell.id} className="ranking-cell name-cell">
                         <b>{fullName}</b>
                         &nbsp;({username})
-                      </td>
+                      </div>
                     );
                   }
 
                   const problemId = cell.column.columnDef.meta!.problemId!;
                   const submissionPoints = cell.getValue() as number;
-                  const status = cell.row.original.status[problemId];
-                  const scoreClass = cell.row.original.scoreClass[problemId];
+                  const status = row.original.status[problemId];
+                  const scoreClass = row.original.scoreClass[problemId];
                   const isPending = !!(status & ProblemAttemptStatus.PENDING);
-                  let className =
+                  let pillClass =
                     'score-cell ' + (isPending ? 'score_pending' : scoreClass);
 
                   if (
-                    cell.row.original.userId === markedUserId &&
+                    isCurrent &&
                     cell.column.id === `problem_${markedProblemId}`
                   ) {
-                    className += ' highlighted-cell';
+                    pillClass += ' highlighted-cell';
                   }
 
                   return (
-                    <td key={cell.id}>
-                      <div className={className}>
+                    <div key={cell.id} className="ranking-cell">
+                      <div className={pillClass}>
                         {status !== ProblemAttemptStatus.UNATTEMPTED &&
                           submissionPoints}
                         {isPending && <span>?</span>}
                       </div>
-                    </td>
+                    </div>
                   );
                 })}
-              </motion.tr>
+              </div>
             );
           })}
-        </tbody>
-      </Table>
+        </div>
+      </div>
+      {imageSrc !== null && (
+        <div className="award-overlay">
+          <img src={imageSrc} alt="" />
+        </div>
+      )}
     </>
   );
 }
