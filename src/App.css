@@ -1,4 +1,5 @@
-html, body {
+html,
+body {
   margin: 0;
   height: 100%;
 }
@@ -7,7 +8,8 @@ body {
   overscroll-behavior-y: none;
 }
 
-#root, .App {
+#root,
+.App {
   height: 100%;
 }
 
@@ -23,7 +25,9 @@ img {
   z-index: 99999;
 }
 
-.ranking-table th, .ranking-table tr, .ranking-table td {
+.ranking-table th,
+.ranking-table tr,
+.ranking-table td {
   height: 50px;
   text-align: center;
   vertical-align: middle;
@@ -70,49 +74,49 @@ img {
 }
 
 .score_0 {
-  background-color: #F40000 !important;
+  background-color: #f40000 !important;
 }
 
 .score_0_10 {
-  background-color: #EB1D00 !important;
+  background-color: #eb1d00 !important;
 }
 
 .score_10_20 {
-  background-color: #E23A00 !important;
+  background-color: #e23a00 !important;
 }
 
 .score_20_30 {
-  background-color: #D95700 !important;
+  background-color: #d95700 !important;
 }
 
 .score_30_40 {
-  background-color: #D17400 !important;
+  background-color: #d17400 !important;
 }
 
 .score_40_50 {
-  background-color: #C89100 !important;
+  background-color: #c89100 !important;
 }
 
 .score_50_60 {
-  background-color: #B99F00 !important;
+  background-color: #b99f00 !important;
 }
 
 .score_60_70 {
-  background-color: #A39E01 !important;
+  background-color: #a39e01 !important;
 }
 
 .score_70_80 {
-  background-color: #8E9D02 !important;
+  background-color: #8e9d02 !important;
 }
 
 .score_80_90 {
-  background-color: #789C03 !important;
+  background-color: #789c03 !important;
 }
 
 .score_90_100 {
-  background-color: #639B04 !important;
+  background-color: #639b04 !important;
 }
 
 .score_100 {
-  background-color: #4E9A05 !important;
+  background-color: #4e9a05 !important;
 }

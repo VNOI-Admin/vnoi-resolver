@@ -27,6 +27,7 @@ import {
   InputData,
   ImageData,
   ProblemAttemptStatus,
+  parseInputData,
   useResolver
 } from './resolver';
 
@@ -52,14 +53,12 @@ function Loading({
   setHideUnofficialContestants: Dispatch<SetStateAction<boolean>>;
 }) {
   const handleInputChange = useCallback(
-    (e: React.FormEvent<HTMLInputElement>) => {
+    (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
       const fileReader = new FileReader();
       fileReader.onload = () => {
-        const inputData = JSON.parse(fileReader.result as string) as InputData;
-        inputData.submissions = inputData.submissions.map((submission) => ({
-          ...submission,
-          time: parseFloat(submission.time as any)
-        }));
+        const inputData = parseInputData(
+          JSON.parse(fileReader.result as string)
+        );
         setInputData(inputData);
       };
       fileReader.readAsText((e.target as HTMLInputElement).files![0]);
@@ -68,7 +67,7 @@ function Loading({
   );
 
   const handleImageChange = useCallback(
-    (e: React.FormEvent<HTMLInputElement>) => {
+    (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
       const fileReader = new FileReader();
       fileReader.onload = () => {
         const imageData = JSON.parse(fileReader.result as string) as ImageData;
@@ -80,7 +79,7 @@ function Loading({
   );
 
   const handleFrozenTimeChange = useCallback(
-    (e: React.FormEvent<HTMLInputElement>) => {
+    (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
       setFrozenTime(parseInt((e.target as HTMLInputElement).value));
     },
     [setFrozenTime]
@@ -114,40 +113,40 @@ function Loading({
   );
 
   return (
-    <Form className='w-50 mt-5 mx-auto'>
-      <Form.Group className='mb-3'>
+    <Form className="w-50 mt-5 mx-auto">
+      <Form.Group className="mb-3">
         <Form.Label>Data</Form.Label>
-        <Form.Control type='file' onChange={handleInputChange as any} />
+        <Form.Control type="file" onChange={handleInputChange} />
       </Form.Group>
-      <Form.Group className='mb-3'>
+      <Form.Group className="mb-3">
         <Form.Label>Image</Form.Label>
-        <Form.Control type='file' onChange={handleImageChange as any} />
+        <Form.Control type="file" onChange={handleImageChange} />
       </Form.Group>
-      <Form.Group className='mb-3'>
+      <Form.Group className="mb-3">
         <Form.Label>Frozen time (since start of contest)</Form.Label>
         <Form.Control
-          type='number'
+          type="number"
           value={frozenTime}
-          onChange={handleFrozenTimeChange as any}
+          onChange={handleFrozenTimeChange}
         />
       </Form.Group>{' '}
-      <Form.Group className='mb-3 '>
+      <Form.Group className="mb-3 ">
         <Select
-          placeholder='Unofficial contestants'
+          placeholder="Unofficial contestants"
           options={usernames}
           isMulti={true}
           onChange={handleSelectChange}
         />
       </Form.Group>
-      <Form.Group className='mb-3'>
+      <Form.Group className="mb-3">
         <Form.Check
-          type='checkbox'
-          label='Hide unofficial contestants'
+          type="checkbox"
+          label="Hide unofficial contestants"
           checked={hideUnofficialContestants}
           onChange={handleCheckboxChange}
         />
       </Form.Group>
-      <Button variant='primary' disabled={!inputData} onClick={handleSubmit}>
+      <Button variant="primary" disabled={!inputData} onClick={handleSubmit}>
         Run
       </Button>
     </Form>
@@ -252,15 +251,15 @@ function Ranking({
 
   if (imageSrc !== null) {
     return (
-      <div className='d-flex align-items-center h-100'>
-        <img className='mx-auto' src={imageSrc} alt='' />;
+      <div className="d-flex align-items-center h-100">
+        <img className="mx-auto" src={imageSrc} alt="" />;
       </div>
     );
   }
 
   return (
     <>
-      <Table striped className='ranking-table'>
+      <Table striped className="ranking-table">
         <thead>
           {table.getHeaderGroups().map((headerGroup) => (
             <tr key={headerGroup.id}>
@@ -275,8 +274,8 @@ function Ranking({
                           header.getContext()
                         )}
                     {isProblem && (
-                      <div className='point-denominator'>
-                        {header.column.columnDef.meta?.points!}
+                      <div className="point-denominator">
+                        {header.column.columnDef.meta!.points}
                       </div>
                     )}
                   </th>
@@ -332,7 +331,10 @@ function Ranking({
                   }
 
                   if (cell.column.columnDef.id === 'name') {
-                    const { fullName, username } = cell.getValue() as any;
+                    const { fullName, username } = cell.getValue() as {
+                      fullName: string;
+                      username: string;
+                    };
                     return (
                       <td key={cell.id}>
                         <b>{fullName}</b>
@@ -341,7 +343,7 @@ function Ranking({
                     );
                   }
 
-                  const problemId = cell.column.columnDef.meta?.problemId!;
+                  const problemId = cell.column.columnDef.meta!.problemId!;
                   const submissionPoints = cell.getValue() as number;
                   const status = cell.row.original.status[problemId];
                   const scoreClass = cell.row.original.scoreClass[problemId];
@@ -390,17 +392,11 @@ function App() {
     const load = async () => {
       const params = queryString.parse(window.location.search);
       if ('data' in params && 'image' in params) {
-        const data = (await (
-          await fetch(params.data as string)
-        ).json()) as InputData;
+        const rawData = await (await fetch(params.data as string)).json();
         const image = (await (
           await fetch(params.image as string)
         ).json()) as ImageData;
-        data.submissions = data.submissions.map((submission) => ({
-          ...submission,
-          time: parseFloat(submission.time as any)
-        }));
-        setInputData(data);
+        setInputData(parseInputData(rawData));
         setImageData(image);
       }
     };
@@ -409,7 +405,7 @@ function App() {
   }, []);
 
   return (
-    <div className='App'>
+    <div className="App">
       {loading || !inputData ? (
         <Loading
           inputData={inputData}

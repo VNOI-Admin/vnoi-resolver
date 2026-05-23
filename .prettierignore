@@ -1,0 +1,8 @@
+build
+dist
+coverage
+.yarn
+.vite
+public/vnoicup*/data.json
+public/vnoicup*/images.json
+yarn.lock
