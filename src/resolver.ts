@@ -1,23 +1,68 @@
-import { useCallback, useMemo } from 'react';
+import { useCallback, useMemo, useReducer } from 'react';
 import { ColumnDef } from '@tanstack/react-table';
 import _ from 'lodash';
 
-import { useStateWithRollback } from './hooks';
 import {
   ImageData,
   InputData,
   InputSubmission,
+  InternalState,
   PointByProblemId,
+  ResolverEvent,
   SubmissionById,
   UserRow,
-  applyResolveSubmission,
+  applyEvent,
   buildInitialState,
+  computeNextEvent,
   getProblemCodeFromIndex,
-  rankUsers
+  rankUsers,
+  replay
 } from './lib/resolver';
 
 export { ProblemAttemptStatus, parseInputData } from './lib/resolver';
-export type { ImageData, InputData } from './lib/resolver';
+export type { ImageData, InputData, ResolverEvent } from './lib/resolver';
+
+type SimState = {
+  base: InternalState;
+  events: ResolverEvent[];
+  current: InternalState;
+};
+
+type ReducerCtx = {
+  submissionById: SubmissionById;
+  pointByProblemId: PointByProblemId;
+  imageData: ImageData;
+};
+
+type Action =
+  | { type: 'step'; choice: number | undefined; ranking: UserRow[] }
+  | { type: 'rollback' };
+
+function makeReducer(ctx: ReducerCtx) {
+  return (state: SimState, action: Action): SimState => {
+    if (action.type === 'step') {
+      const next = computeNextEvent(
+        state.current,
+        action.ranking,
+        ctx,
+        action.choice
+      );
+      if (!next) return state;
+      return {
+        base: state.base,
+        events: [...state.events, next],
+        current: applyEvent(state.current, next, ctx)
+      };
+    }
+    if (state.events.length === 0) return state;
+    const newEvents = state.events.slice(0, -1);
+    return {
+      base: state.base,
+      events: newEvents,
+      current: replay(state.base, newEvents, ctx)
+    };
+  };
+}
 
 export function useResolver({
   inputData,
@@ -36,7 +81,7 @@ export function useResolver({
   markedUserId: number;
   markedProblemId: number;
   imageSrc: string | null;
-  step: (nextSubmissionOrderToResolve?: number) => boolean;
+  step: (choice?: number) => void;
   rollback: () => void;
 } {
   const userIds = useMemo<number[]>(
@@ -113,147 +158,41 @@ export function useResolver({
     return columns;
   }, [inputData.problems]);
 
-  const [state, setState, rollback] = useStateWithRollback(() =>
-    buildInitialState({ inputData, userIds, frozenTime })
+  const reducer = useMemo(
+    () => makeReducer({ submissionById, pointByProblemId, imageData }),
+    [submissionById, pointByProblemId, imageData]
+  );
+
+  const [sim, dispatch] = useReducer(
+    reducer,
+    null as unknown as SimState,
+    (): SimState => {
+      const base = buildInitialState({ inputData, userIds, frozenTime });
+      return { base, events: [], current: base };
+    }
   );
 
   const data = useMemo(
-    () => rankUsers(state, unofficialContestants),
-    [state, unofficialContestants]
+    () => rankUsers(sim.current, unofficialContestants),
+    [sim, unofficialContestants]
   );
 
   const step = useCallback(
-    (nextSubmissionOrderToResolve?: number) => {
-      const {
-        shownImage,
-        imageSrc,
-        currentRowIndex,
-        markedUserId,
-        markedProblemId
-      } = state;
-      if (currentRowIndex === -1) {
-        return false;
-      }
-
-      if (markedUserId !== data[currentRowIndex]!.userId) {
-        setState({
-          ...state,
-          currentRowIndex,
-          markedUserId: data[currentRowIndex]!.userId,
-          markedProblemId: -1,
-          nextSubmissionId: -1
-        });
-        return true;
-      }
-
-      if (
-        !state.users[data[currentRowIndex].userId]!.pendingSubmissionIds!.length
-      ) {
-        if (
-          data[currentRowIndex].rank in imageData &&
-          !shownImage &&
-          imageSrc === null
-        ) {
-          setState({
-            ...state,
-            shownImage: true,
-            imageSrc: imageData[data[currentRowIndex].rank]
-          });
-          return true;
-        }
-
-        if (shownImage && imageSrc !== null) {
-          setState({
-            ...state,
-            imageSrc: null
-          });
-          return true;
-        }
-
-        if (currentRowIndex === 0) {
-          setState({
-            ...state,
-            shownImage: false,
-            imageSrc: null,
-            currentRowIndex: -1,
-            markedUserId: -1,
-            markedProblemId: -1,
-            nextSubmissionId: -1
-          });
-          return false;
-        }
-
-        const nextMarkedUserId = data[currentRowIndex - 1]!.userId;
-        setState({
-          ...state,
-          shownImage: false,
-          imageSrc: null,
-          currentRowIndex: currentRowIndex - 1,
-          markedUserId: nextMarkedUserId,
-          markedProblemId: -1,
-          nextSubmissionId: -1
-        });
-
-        return true;
-      }
-
-      if (markedProblemId === -1) {
-        let nextSubmissionId: number | undefined;
-        if (nextSubmissionOrderToResolve !== undefined) {
-          if (
-            nextSubmissionOrderToResolve < 0 ||
-            nextSubmissionOrderToResolve >=
-              state.users[markedUserId].pendingSubmissionIds.length
-          ) {
-            console.log('Invalid nextSubmissionOrderToResolve');
-            return true;
-          }
-
-          nextSubmissionId =
-            state.users[markedUserId].pendingSubmissionIds[
-              nextSubmissionOrderToResolve
-            ];
-        }
-
-        if (nextSubmissionId === undefined) {
-          nextSubmissionId =
-            _.minBy(
-              state.users[markedUserId].pendingSubmissionIds,
-              (id) => submissionById[id].problemId
-            ) ?? -1;
-        }
-
-        setState({
-          ...state,
-          currentRowIndex,
-          markedUserId,
-          markedProblemId: submissionById[nextSubmissionId]?.problemId ?? -1,
-          nextSubmissionId
-        });
-        return true;
-      }
-
-      setState(
-        applyResolveSubmission({
-          state,
-          submissionId: state.nextSubmissionId,
-          submissionById,
-          pointByProblemId
-        })
-      );
-
-      return true;
+    (choice?: number) => {
+      dispatch({ type: 'step', choice, ranking: data });
     },
-    [submissionById, pointByProblemId, state, data, imageData, setState]
+    [data]
   );
+
+  const rollback = useCallback(() => dispatch({ type: 'rollback' }), []);
 
   return {
     columns,
     data,
-    currentRowIndex: state.currentRowIndex,
-    markedUserId: state.markedUserId,
-    markedProblemId: state.markedProblemId,
-    imageSrc: state.imageSrc,
+    currentRowIndex: sim.current.currentRowIndex,
+    markedUserId: sim.current.markedUserId,
+    markedProblemId: sim.current.markedProblemId,
+    imageSrc: sim.current.imageSrc,
     step,
     rollback
   };

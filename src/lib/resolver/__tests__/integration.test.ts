@@ -5,7 +5,7 @@ import _ from 'lodash';
 import { describe, expect, it } from 'vitest';
 
 import {
-  applyResolveSubmission,
+  applyEvent,
   buildInitialState,
   parseInputData,
   processSubmissions,
@@ -59,16 +59,14 @@ function resolveAllPending(
 
   let state = initialState;
   for (const userId of Object.keys(state.users)) {
-    const pending = [
-      ...state.users[userId as unknown as number].pendingSubmissionIds
-    ];
+    const numericUserId = Number(userId);
+    const pending = [...state.users[numericUserId].pendingSubmissionIds];
     for (const submissionId of pending) {
-      state = applyResolveSubmission({
+      state = applyEvent(
         state,
-        submissionId,
-        submissionById,
-        pointByProblemId
-      });
+        { kind: 'resolve', userId: numericUserId, submissionId },
+        { submissionById, pointByProblemId }
+      );
     }
   }
   return state;

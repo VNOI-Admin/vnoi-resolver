@@ -30,7 +30,6 @@ export function processSubmissions({
     currentRowIndex: inputData.users.length - 1,
     markedUserId: -1,
     markedProblemId: -1,
-    nextSubmissionId: -1,
     users: _.keyBy(
       inputData.users.map((user) => ({
         ...user,

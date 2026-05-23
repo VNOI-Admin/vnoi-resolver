@@ -59,7 +59,6 @@ export type InternalState = {
   currentRowIndex: number;
   markedUserId: number;
   markedProblemId: number;
-  nextSubmissionId: number;
   users: { [userId: number]: InternalUser };
 };
 
