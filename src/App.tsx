@@ -1,33 +1,40 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import './App.css';
 import { useKeyPress } from './hooks';
 import {
   THEMES,
+  THEME_LS_KEY,
   ThemeProvider,
   cycleThemeKey,
-  DEFAULT_THEME_KEY,
+  loadThemeKey,
   type ThemeKey
 } from './canvas/theme';
+import { useThemeCssVars } from './canvas/useThemeCssVars';
 import { InputData, AwardImageMap } from './resolver';
+import type { SimAction } from './lib/resolver';
 import { Loading } from './Loading';
-import { Ranking } from './Ranking';
-import { readUrlConfig } from './util/urlConfig';
-
-const THEME_LS_KEY = 'vnoi-resolver:theme';
-
-function loadThemeKey(): ThemeKey {
-  try {
-    const saved = window.localStorage.getItem(THEME_LS_KEY);
-    if (saved && saved in THEMES) return saved as ThemeKey;
-  } catch {
-    // localStorage can throw (private mode, quota). Fall through to default.
-  }
-  return DEFAULT_THEME_KEY;
-}
+import { OperatorConsole } from './operator/OperatorConsole';
+import { Audience } from './Audience';
+import {
+  audienceWindowUrl,
+  readDisplayRole,
+  readUrlConfig
+} from './util/urlConfig';
+import {
+  ALIVE_POLL_MS,
+  ALIVE_TIMEOUT_MS,
+  createSyncChannel,
+  type SyncMessage
+} from './sync';
 
 function App() {
-  // Read URL once for initial state — no live sync back.
+  const role = useMemo(readDisplayRole, []);
+  if (role === 'audience') return <Audience />;
+  return <Operator />;
+}
+
+function Operator() {
   const initial = useMemo(readUrlConfig, []);
 
   const [loading, setLoading] = useState<boolean>(true);
@@ -41,50 +48,228 @@ function App() {
     initial.hideUnofficial
   );
 
-  // Active theme. `T` cycles; persisted to localStorage so the next ceremony
-  // load remembers the operator's pick.
   const [themeKey, setThemeKey] = useState<ThemeKey>(loadThemeKey);
   useEffect(() => {
     try {
       window.localStorage.setItem(THEME_LS_KEY, themeKey);
     } catch {
-      // ignore — themed UI still works, just won't persist
+      // localStorage may be disabled; theming still works in-memory.
     }
   }, [themeKey]);
   useKeyPress('t', () => setThemeKey(cycleThemeKey));
 
-  // Bump a version every time the contest dataset identity changes. Used as a
-  // remount key on <Ranking> so its useReducer re-initialises from the new
-  // base state. (useReducer's init fn only runs once per instance.)
-  const dataVersionRef = useRef({ data: inputData, version: 0 });
-  if (dataVersionRef.current.data !== inputData) {
+  const [speed, setSpeed] = useState(1);
+
+  // Bump on dataset identity OR unofficial-partition change. Used as a
+  // remount key on OperatorConsole so useReducer re-initialises — toggling
+  // the partition without a bump would leave useResolver ranking a
+  // now-different population than its initial precompute baseline.
+  const dataVersionRef = useRef({
+    data: inputData,
+    unofficial: unofficialContestants,
+    hideUnofficial: hideUnofficialContestants,
+    version: 0
+  });
+  if (
+    dataVersionRef.current.data !== inputData ||
+    dataVersionRef.current.unofficial !== unofficialContestants ||
+    dataVersionRef.current.hideUnofficial !== hideUnofficialContestants
+  ) {
     dataVersionRef.current = {
       data: inputData,
+      unofficial: unofficialContestants,
+      hideUnofficial: hideUnofficialContestants,
       version: dataVersionRef.current.version + 1
     };
   }
   const dataVersion = dataVersionRef.current.version;
 
-  // Sync body bg + UI CSS vars to the active theme on every screen. The CSS
-  // vars (--ui-surface / --ui-text / --ui-accent / etc.) drive every HTML
-  // chrome element — loading form, share modal, help overlay, autoplay
-  // controls, FPS HUD — so they all re-tint when the theme cycles.
-  //
-  // The Pixi canvas paints its own bg each frame, but any gap (mid-tween row
-  // movement, mask edges, device-pixel rounding) lets the document body show
-  // through; on a light theme the CSS default would leak as dark navy.
+  useThemeCssVars(themeKey);
+
+  const channelRef = useRef<BroadcastChannel | null>(null);
   useEffect(() => {
-    const hex = (n: number) => `#${n.toString(16).padStart(6, '0')}`;
-    const root = document.documentElement.style;
-    const theme = THEMES[themeKey];
-    document.body.style.background = hex(theme.colors.bg);
-    root.setProperty('--ui-surface', hex(theme.colors.bg));
-    root.setProperty('--ui-surface-elevated', hex(theme.colors.bgStripe));
-    root.setProperty('--ui-text', hex(theme.colors.text));
-    root.setProperty('--ui-text-muted', hex(theme.colors.textMuted));
-    root.setProperty('--ui-accent', hex(theme.colors.accent));
-    root.setProperty('--ui-border', hex(theme.colors.border));
+    channelRef.current = createSyncChannel();
+    return () => {
+      channelRef.current?.close();
+      channelRef.current = null;
+    };
+  }, []);
+
+  const actionLogRef = useRef<SimAction[]>([]);
+  const prevDataVersionRef = useRef(dataVersion);
+  if (prevDataVersionRef.current !== dataVersion) {
+    actionLogRef.current = [];
+    prevDataVersionRef.current = dataVersion;
+  }
+
+  // Monotonic ceremony id, tagged onto every message we broadcast. Bumps in
+  // sync with the action-log reset above so an append broadcast that races
+  // a dataset change still carries the OLD ceremony id and gets dropped by
+  // the audience instead of being mis-applied against the new ceremony.
+  const ceremonyIdRef = useRef(0);
+  const prevDataVersionForCeremonyRef = useRef(dataVersion);
+  if (prevDataVersionForCeremonyRef.current !== dataVersion) {
+    ceremonyIdRef.current += 1;
+    prevDataVersionForCeremonyRef.current = dataVersion;
+  }
+
+  // Ref so the hello-responder reads the live payload without re-binding
+  // its listener on every state change.
+  const payloadRef = useRef({
+    inputData,
+    imageData,
+    frozenTime,
+    unofficialContestants,
+    hideUnofficialContestants,
+    themeKey,
+    speed
+  });
+  payloadRef.current = {
+    inputData,
+    imageData,
+    frozenTime,
+    unofficialContestants,
+    hideUnofficialContestants,
+    themeKey,
+    speed
+  };
+
+  useEffect(() => {
+    const ch = channelRef.current;
+    if (!ch) return;
+    const onMessage = (e: MessageEvent<SyncMessage>) => {
+      if (e.data.kind !== 'hello') return;
+      const p = payloadRef.current;
+      if (!p.inputData) return;
+      ch.postMessage({
+        kind: 'init',
+        ceremonyId: ceremonyIdRef.current,
+        payload: {
+          inputData: p.inputData,
+          imageData: p.imageData,
+          frozenTime: p.frozenTime,
+          unofficialContestants: p.unofficialContestants,
+          hideUnofficialContestants: p.hideUnofficialContestants,
+          themeKey: p.themeKey,
+          speed: p.speed,
+          actionLog: actionLogRef.current.slice()
+        }
+      });
+    };
+    ch.addEventListener('message', onMessage);
+    return () => ch.removeEventListener('message', onMessage);
+  }, []);
+
+  // Unsolicited init on dataset / partition change so an already-connected
+  // audience picks up the new ceremony without needing a refresh. Guarded
+  // against StrictMode dev double-mount with a "last-broadcast version" ref.
+  const lastBroadcastDataVersionRef = useRef<number | null>(null);
+  useEffect(() => {
+    const ch = channelRef.current;
+    if (!ch || !inputData) return;
+    if (lastBroadcastDataVersionRef.current === dataVersion) return;
+    lastBroadcastDataVersionRef.current = dataVersion;
+    ch.postMessage({
+      kind: 'init',
+      ceremonyId: ceremonyIdRef.current,
+      payload: {
+        inputData,
+        imageData,
+        frozenTime,
+        unofficialContestants,
+        hideUnofficialContestants,
+        themeKey,
+        speed,
+        actionLog: actionLogRef.current.slice()
+      }
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dataVersion]);
+
+  // Skip first paint: the initial theme/speed values ride along in the
+  // init payload, no need to fire a redundant message at mount.
+  const firstThemePaint = useRef(true);
+  useEffect(() => {
+    if (firstThemePaint.current) {
+      firstThemePaint.current = false;
+      return;
+    }
+    channelRef.current?.postMessage({
+      kind: 'theme',
+      ceremonyId: ceremonyIdRef.current,
+      themeKey
+    });
   }, [themeKey]);
+
+  const firstSpeedPaint = useRef(true);
+  useEffect(() => {
+    if (firstSpeedPaint.current) {
+      firstSpeedPaint.current = false;
+      return;
+    }
+    channelRef.current?.postMessage({
+      kind: 'speed',
+      ceremonyId: ceremonyIdRef.current,
+      speed
+    });
+  }, [speed]);
+
+  const broadcastAction = useCallback((action: SimAction) => {
+    actionLogRef.current.push(action);
+    channelRef.current?.postMessage({
+      kind: 'append',
+      ceremonyId: ceremonyIdRef.current,
+      action
+    });
+  }, []);
+
+  // Hysteresis: disconnect needs two consecutive missed polls, reconnect
+  // is instant. Also flip to connected immediately on receiving 'alive' so
+  // the first ping after the audience window opens isn't delayed up to
+  // ALIVE_POLL_MS by waiting for the next interval tick.
+  const [audienceConnected, setAudienceConnected] = useState(false);
+  useEffect(() => {
+    const ch = channelRef.current;
+    if (!ch) return;
+    let lastSeen = 0;
+    let missedPolls = 0;
+    const onMessage = (e: MessageEvent<SyncMessage>) => {
+      if (e.data.kind === 'alive') {
+        lastSeen = Date.now();
+        missedPolls = 0;
+        setAudienceConnected(true);
+      }
+    };
+    ch.addEventListener('message', onMessage);
+    const id = setInterval(() => {
+      const within = Date.now() - lastSeen < ALIVE_TIMEOUT_MS;
+      if (within) {
+        missedPolls = 0;
+        setAudienceConnected(true);
+      } else {
+        missedPolls++;
+        if (missedPolls >= 2) setAudienceConnected(false);
+      }
+    }, ALIVE_POLL_MS);
+    return () => {
+      ch.removeEventListener('message', onMessage);
+      clearInterval(id);
+    };
+  }, []);
+
+  // `popup=yes` plus explicit width/height/top/left flips browsers out of
+  // tab-default into popup mode — drops the address bar / tab strip /
+  // toolbar so the projector sees only the page. Named target focuses an
+  // existing window instead of spawning a duplicate.
+  useKeyPress('o', () => {
+    const w = window.screen.availWidth;
+    const h = window.screen.availHeight;
+    window.open(
+      audienceWindowUrl(),
+      'vnoi-audience',
+      `popup=yes,width=${w},height=${h},top=0,left=0,noopener`
+    );
+  });
 
   return (
     <ThemeProvider theme={THEMES[themeKey]}>
@@ -105,13 +290,19 @@ function App() {
             setHideUnofficialContestants={setHideUnofficialContestants}
           />
         ) : (
-          <Ranking
+          <OperatorConsole
             key={dataVersion}
             inputData={inputData}
             imageData={imageData}
             frozenTime={frozenTime}
             unofficialContestants={unofficialContestants}
             hideUnofficialContestants={hideUnofficialContestants}
+            themeKey={themeKey}
+            onCycleTheme={() => setThemeKey(cycleThemeKey)}
+            speed={speed}
+            setSpeed={setSpeed}
+            audienceConnected={audienceConnected}
+            onAction={broadcastAction}
           />
         )}
       </div>

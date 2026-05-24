@@ -1,8 +1,10 @@
+// Public surface. Tests reach into internal modules (build, util) directly
+// for implementation details. Keep this list narrow.
 export * from './types';
 export { getProblemCodeFromIndex } from './codes';
 export { getScoreClass } from './scoring';
 export { calculatePenalty } from './penalty';
-export { processSubmissions, buildInitialState } from './build';
+export { buildInitialState } from './build';
 export {
   applyEvent,
   computeNextEvent,
@@ -20,4 +22,7 @@ export {
   type SimState,
   type SimulationCtx
 } from './simulation';
-export { keyBy, mapValues, minBy, sortBy } from './util';
+// keyBy / mapValues are dictionary helpers, not really part of the public
+// domain — re-exported because useResolver builds runtime lookups outside
+// this folder.
+export { keyBy, mapValues } from './util';

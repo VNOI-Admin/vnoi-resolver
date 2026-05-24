@@ -18,22 +18,22 @@ import { Header } from './Header';
 import { Row } from './Row';
 import { useTheme } from './theme';
 import { AnimationRoot, useAnimationJob } from './animation';
+import { easeOutCubic } from './easing';
+import { useAnimationSpeed } from './animationSpeed';
 
 // Register Pixi classes for JSX use (<pixiContainer>, <pixiGraphics>, <pixiText>).
 extend({ Container, Graphics, Text });
 
-const CAMERA_TWEEN_MS = 1500;
-const easeOutCubic = (t: number) => 1 - Math.pow(1 - t, 3);
+// Tween base, divided by speed at consumption. 800 keeps the camera pan
+// inside the 1000/speed autoplay interval at every speed.
+const CAMERA_TWEEN_MS_BASE = 800;
 
-// Virtualization: render rows whose targetIndex falls inside the camera's
-// visible window, padded by OVERSCAN rows above/below to absorb in-flight row
-// tweens (a row sliding into view from outside should already be mounted).
+// Padding above/below the visible window to keep in-flight row tweens
+// mounted when they slide in from outside the viewport.
 const OVERSCAN = 20;
 
-// @pixi/react sets `backgroundColor` on Application mount and doesn't always
-// flow prop changes through to the renderer. This component pushes the value
-// imperatively each time the active theme changes so the canvas clear colour
-// stays in sync with the theme. Renders nothing.
+// @pixi/react sets backgroundColor on mount but doesn't always flow prop
+// changes through. Push the value imperatively on theme change.
 function ThemeBgSync({ bg }: { bg: number }) {
   const { app } = useApplication();
   useEffect(() => {
@@ -49,10 +49,22 @@ function useViewportSize() {
     height: window.innerHeight
   }));
   useEffect(() => {
-    const onResize = () =>
-      setSize({ width: window.innerWidth, height: window.innerHeight });
+    // rAF-coalesce per-pixel resize events. Without this a slow drag fires
+    // onResize hundreds of times per second, each one churning callback
+    // identity and triggering Pixi repaints across every mounted Row + Pill.
+    let rafId = 0;
+    const onResize = () => {
+      if (rafId !== 0) return;
+      rafId = requestAnimationFrame(() => {
+        rafId = 0;
+        setSize({ width: window.innerWidth, height: window.innerHeight });
+      });
+    };
     window.addEventListener('resize', onResize);
-    return () => window.removeEventListener('resize', onResize);
+    return () => {
+      window.removeEventListener('resize', onResize);
+      if (rafId !== 0) cancelAnimationFrame(rafId);
+    };
   }, []);
   return size;
 }
@@ -80,7 +92,7 @@ export function Scoreboard({
   const bodyHeight = Math.max(0, viewport.height - HEADER_HEIGHT);
   const contentHeight = data.length * CARD_HEIGHT;
 
-  // Target camera Y: align cursor's row bottom to viewport bottom.
+  // Target camera Y: align cursor row's bottom to the viewport bottom.
   const cameraTargetY = useMemo(() => {
     if (currentRowIndex < 0) return 0;
     const bottom = (currentRowIndex + 1) * CARD_HEIGHT;
@@ -132,7 +144,9 @@ function Body({
   markedUserId: number;
   markedProblemId: number;
 }) {
-  const containerRef = useRef<PixiContainer>(null);
+  const speed = useAnimationSpeed();
+  const CAMERA_TWEEN_MS = CAMERA_TWEEN_MS_BASE / speed;
+  const containerRef = useRef<PixiContainer | null>(null);
   const tween = useRef<{
     fromY: number;
     toY: number;
@@ -146,14 +160,23 @@ function Body({
   });
   const cameraY = useRef(cameraTargetY);
 
-  // Track the latest scroll max so the tick can clamp cameraY against it.
-  // (When the viewport shrinks mid-tween, the old target may now be past the
-  // content end.)
+  // Ref'd so the tick can clamp against a mid-tween viewport shrink whose
+  // old target is now past the content end.
   const maxCameraY = Math.max(0, data.length * CARD_HEIGHT - bodyHeight);
   const maxCameraYRef = useRef(maxCameraY);
   maxCameraYRef.current = maxCameraY;
 
   const lastSetY = useRef<number | null>(null);
+
+  // Callback ref. If @pixi/react re-instantiates the inner container
+  // (StrictMode, theme bridge, future conditional render), the new
+  // Container starts at y=0 — but lastSetY would still hold the previous
+  // written value and skip the next write, silently freezing the camera
+  // at 0. Resetting lastSetY on attach closes that footgun.
+  const attachContainer = useCallback((c: PixiContainer | null) => {
+    containerRef.current = c;
+    lastSetY.current = null;
+  }, []);
 
   const job = useAnimationJob(() => {
     const el = containerRef.current;
@@ -166,8 +189,6 @@ function Body({
       if (t >= 1) tween.current.fromY = toY;
       needsPaint = true;
     }
-    // Clamp against the current scroll max — guards an in-flight tween whose
-    // target is no longer reachable after a window resize.
     if (cameraY.current > maxCameraYRef.current) {
       cameraY.current = maxCameraYRef.current;
       needsPaint = true;
@@ -186,9 +207,9 @@ function Body({
     }
   });
 
-  // Synchronous init/start. First mount: snap camera and paint. Subsequent
-  // cameraTargetY changes: kick off a tween. Either way, ensure the job is
-  // running so the next frame paints.
+  // First mount snaps to target; subsequent changes start a tween. Also
+  // re-snapshots when CAMERA_TWEEN_MS changes (speed slider during a pan)
+  // so t = elapsed/TWEEN_MS doesn't jump past 1 and snap.
   useLayoutEffect(() => {
     const el = containerRef.current;
     if (!el) return;
@@ -202,10 +223,11 @@ function Body({
         start: 0,
         initialized: true
       };
-      // Idle until the next change — nothing to animate yet.
       return;
     }
-    if (tween.current.toY === cameraTargetY) return;
+    const targetUnchanged = tween.current.toY === cameraTargetY;
+    const inFlight = tween.current.fromY !== tween.current.toY;
+    if (targetUnchanged && !inFlight) return;
     tween.current = {
       fromY: cameraY.current,
       toY: cameraTargetY,
@@ -213,16 +235,19 @@ function Body({
       initialized: true
     };
     job.start();
-  }, [cameraTargetY, job]);
+  }, [cameraTargetY, job, CAMERA_TWEEN_MS]);
 
-  // Re-check on resize (bodyHeight changes): may need a one-shot clamp pass.
+  // Resize-driven clamp pass. Also clamps tween.current.toY so the
+  // self-stop check trips immediately instead of spinning 60Hz no-ops for
+  // up to CAMERA_TWEEN_MS while fromY/toY drift apart.
   useLayoutEffect(() => {
+    if (tween.current.toY > maxCameraY) tween.current.toY = maxCameraY;
+    else if (tween.current.toY < 0) tween.current.toY = 0;
+    if (tween.current.fromY > maxCameraY) tween.current.fromY = maxCameraY;
+    else if (tween.current.fromY < 0) tween.current.fromY = 0;
     if (cameraY.current > maxCameraY || cameraY.current < 0) job.start();
   }, [maxCameraY, job]);
 
-  // Mask the body so panned rows don't render above the header or below the
-  // viewport. Attached imperatively in useLayoutEffect — going through React
-  // state would cause one paint where the body renders unmasked.
   const drawMask = useCallback(
     (g: PixiGraphics) => {
       g.clear();
@@ -231,41 +256,42 @@ function Body({
     [layout.totalWidth, bodyHeight]
   );
 
-  const maskRef = useRef<PixiGraphics>(null);
-  // Re-assert the mask link whenever the mask geometry could have changed —
-  // the deps mirror those of `drawMask`. Cheap: just two property assignments
-  // per resize. Worth the defensiveness because if the Graphics ref ever gets
-  // re-instantiated (StrictMode, future conditional render), a once-only
-  // attach silently leaves the body unmasked.
+  // Callback ref so a re-instantiated Graphics is always linked (StrictMode
+  // double-mount, future conditional render). The earlier dep-list approach
+  // failed when the Graphics re-mounted without a geometry change.
+  const maskRef = useRef<PixiGraphics | null>(null);
+  const attachMask = useCallback((g: PixiGraphics | null) => {
+    maskRef.current = g;
+    const container = containerRef.current;
+    if (container && g) {
+      // sortableChildren lets tweening rows lift above static ones via zIndex.
+      // Marked-row-render-last (below) is a belt-and-suspenders cover for
+      // the case where the sort bookkeeping desyncs under rapid cycles.
+      container.sortableChildren = true;
+      container.mask = g;
+    }
+  }, []);
+  // Container can re-mount independently of the mask (StrictMode, theme
+  // bridge); re-assert sortableChildren + mask defensively.
   useLayoutEffect(() => {
-    if (containerRef.current) {
-      // Enable per-frame z-sort so tweening rows can lift above static ones
-      // via zIndex. The marked-row-last render order is a separate belt-and-
-      // suspenders mechanism so the marked row stays on top even if the sort
-      // bookkeeping ever desyncs.
-      containerRef.current.sortableChildren = true;
-      if (maskRef.current) containerRef.current.mask = maskRef.current;
+    const container = containerRef.current;
+    const mask = maskRef.current;
+    if (container) {
+      container.sortableChildren = true;
+      if (mask) container.mask = mask;
     }
   }, [layout.totalWidth, bodyHeight]);
 
-  // Render the marked row LAST so Pixi draws it last → always on top of any
-  // passersby. We don't rely on sortableChildren + zIndex because under rapid
-  // forward/backward cycles the sortDirty bookkeeping can desync and a moving
-  // row ends up rendered behind the marked one.
+  // Render marked row LAST. sortableChildren + zIndex isn't reliable enough
+  // under rapid forward/backward cycles — the sortDirty bookkeeping can
+  // desync and the marked row ends up behind a passerby.
   const markedRowIndex =
     markedUserId === -1 ? -1 : data.findIndex((r) => r.userId === markedUserId);
   const markedRow = markedRowIndex >= 0 ? data[markedRowIndex] : undefined;
 
-  // Track the previous cameraTargetY so a big-jump dispatch (e.g. cursor
-  // moves rank 600 → 100) still mounts the rows along the entire camera path.
-  // Without this, the 1.5s camera tween would fly over an unmounted range and
-  // briefly show a blank stripe where rows should be. Updated post-commit so
-  // the value we read on render is the target from the *previous* render.
-  //
-  // We also include `cameraY.current` — where the camera physically *is right
-  // now*, which can differ from both prev and new targets if the user
-  // dispatches mid-tween. Including it ensures the path-from-here-to-target is
-  // always mounted.
+  // Mount rows along the entire camera path (prev target → current camera Y
+  // → new target + bodyHeight). A big-jump dispatch (rank 600 → 100) would
+  // otherwise fly over an unmounted range and briefly show a blank stripe.
   const prevCameraTargetY = useRef(cameraTargetY);
   useEffect(() => {
     prevCameraTargetY.current = cameraTargetY;
@@ -294,11 +320,10 @@ function Body({
 
   return (
     <pixiContainer>
-      <pixiGraphics ref={maskRef} draw={drawMask} />
-      <pixiContainer ref={containerRef}>
+      <pixiGraphics ref={attachMask} draw={drawMask} />
+      <pixiContainer ref={attachContainer}>
         {visibleData.map((row, localIdx) => {
           if (row.userId === markedUserId) return null;
-          // Slice-relative index → absolute targetIndex (= position in `data`).
           const targetIndex = firstVisibleIndex + localIdx;
           return (
             <Row

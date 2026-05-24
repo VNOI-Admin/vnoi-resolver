@@ -1,12 +1,8 @@
-// Sim-level orchestration over the event/state primitives in events.ts.
+// Sim orchestration over the event/state primitives in events.ts.
 //
-// The reveal is deterministic given (inputData, frozenTime, choices). We
-// precompute the entire default-choice sequence upfront with `precomputeFrom`,
-// so `step` / `rollback` become O(1) cursor moves on the precomputed arrays.
-//
-// If the user picks a non-default problem with 1-9, the reducer diverges at
-// the current cursor: drops the tail, applies the new event, and re-precomputes
-// from there.
+// The default-choice sequence is precomputed upfront so step/rollback are
+// O(1) cursor moves. A non-default 1–9 pick diverges at the cursor: drop
+// the tail, apply the new event, re-precompute from there.
 
 import {
   applyEvent,
@@ -34,8 +30,8 @@ export type SimAction =
   | { type: 'step'; choice: number | undefined }
   | { type: 'rollback' };
 
-// Hard cap to keep a malformed dataset from looping forever. The vnoicup24
-// reveal terminates in ~1k events; this leaves 3 orders of magnitude of slack.
+// Hard cap to keep a malformed dataset from looping forever. Real datasets
+// terminate in ~1k events; this leaves 3 orders of magnitude of slack.
 export const PRECOMPUTE_GUARD = 1_000_000;
 
 export function precomputeFrom(
@@ -45,7 +41,8 @@ export function precomputeFrom(
   const events: ResolverEvent[] = [];
   const states: InternalState[] = [startState];
   let state = startState;
-  for (let i = 0; i < PRECOMPUTE_GUARD; i++) {
+  let i = 0;
+  for (; i < PRECOMPUTE_GUARD; i++) {
     const ranking = rankUsers(state, ctx.unofficialContestants);
     const next = computeNextEvent(state, ranking, ctx);
     if (!next) break;
@@ -53,6 +50,15 @@ export function precomputeFrom(
     state = applyEvent(state, next, ctx);
     states.push(state);
     if (next.kind === 'end') break;
+  }
+  // Diagnostic if we hit the cap without emitting `end` — almost certainly
+  // a malformed dataset producing an infinite event loop. Without this
+  // signal the operator UI would silently show a truncated reveal.
+  if (i === PRECOMPUTE_GUARD && events[events.length - 1]?.kind !== 'end') {
+    console.error(
+      `precomputeFrom: hit PRECOMPUTE_GUARD (${PRECOMPUTE_GUARD}) without ` +
+        `terminating; reveal log is truncated. Likely a malformed dataset.`
+    );
   }
   return { events, states };
 }
@@ -70,12 +76,9 @@ export function makeReducer(ctx: SimulationCtx) {
     if (action.type === 'step') {
       if (state.cursor >= state.events.length) return state;
 
-      // The precomputed event was generated assuming the default choice
-      // (smallest problemId). `choice` only matters at a `mark_problem`
-      // boundary; for any other event kind it's a no-op. `choice === 0` is
-      // also identical to the default since pendingSubmissionIds is sorted
-      // by problemId.
-      // Guarded by the cursor-range check above: cursor < events.length.
+      // Precomputed events assume default choice (smallest problemId).
+      // choice only matters at a mark_problem boundary; choice===0 is the
+      // default (pendingSubmissionIds is sorted by problemId).
       const precomputed = state.events[state.cursor]!;
       const choiceIsDefault =
         action.choice === undefined ||
@@ -86,9 +89,7 @@ export function makeReducer(ctx: SimulationCtx) {
         return { ...state, cursor: state.cursor + 1 };
       }
 
-      // Non-default choice on a mark_problem step → diverge. Re-precompute
-      // the tail from the new state. `states[cursor]` exists by invariant
-      // (states.length === events.length + 1, cursor in range).
+      // Non-default choice → diverge. Re-precompute from the new state.
       const currentState = state.states[state.cursor]!;
       const ranking = rankUsers(currentState, ctx.unofficialContestants);
       const newEvent = computeNextEvent(

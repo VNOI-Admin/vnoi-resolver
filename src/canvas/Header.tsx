@@ -5,10 +5,9 @@ import { getProblemCodeFromIndex } from '../lib/resolver';
 import { TEXT, useTheme } from './theme';
 import { HEADER_HEIGHT, Layout } from './layout';
 
-// Problem letter sits up top with its point-value subscript underneath. The
-// LETTER + POINTS pair forms a visual block; RANK / SCORE / TIME (which are
-// single-line labels with nothing under them) sit at that block's midpoint so
-// they read as visually-centered against the column headers.
+// Problem letter on top + point-value subscript underneath forms a stacked
+// block. Side labels (RANK / SCORE / TIME) sit at that block's midpoint so
+// they read visually-centered against the column headers.
 const LETTER_Y = 26;
 const POINTS_Y = 50;
 const SIDE_LABEL_Y = (LETTER_Y + POINTS_Y) / 2;
@@ -56,9 +55,6 @@ function HeaderInner({
     (g: PixiGraphics) => {
       g.clear();
       g.rect(0, 0, layout.totalWidth, HEADER_HEIGHT).fill(bgColor);
-      // Neutral 1 px rule separates header from the scoreboard body without
-      // pulling attention. Theme identity now lives only in marked-row tint
-      // and pill halo — both event-driven, not always-on.
       g.rect(0, HEADER_HEIGHT - 1, layout.totalWidth, 1).fill(borderColor);
     },
     [layout.totalWidth, bgColor, borderColor]
@@ -67,7 +63,6 @@ function HeaderInner({
   return (
     <pixiContainer>
       <pixiGraphics draw={drawBg} />
-      {/* Side labels — vertically centered against the letter+points stack. */}
       <pixiText
         text="RANK"
         x={layout.rank.x + layout.rank.w / 2}
@@ -89,7 +84,6 @@ function HeaderInner({
         anchor={0.5}
         style={headerLabelStyle}
       />
-      {/* Problem column header: letter on top, point value subscript below. */}
       {problems.map((problem, i) => {
         const col = layout.problems[i]!;
         return (
@@ -115,6 +109,4 @@ function HeaderInner({
   );
 }
 
-// Header content is determined entirely by `problems` + `layout`, both of which
-// are referentially stable until viewport resize / contest change.
 export const Header = memo(HeaderInner);

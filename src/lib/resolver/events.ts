@@ -50,22 +50,25 @@ export function applyEvent(
       };
 
     case 'mark_problem': {
-      // Sanity check: the user must actually have a pending submission whose
-      // problem matches. computeNextEvent only ever emits valid mark_problem
-      // events, so a failure here means upstream state was corrupted (stale
-      // event log, malformed dispatch, etc.). Throw loudly rather than
-      // silently degrading — silent degradation would let computeNextEvent
-      // re-emit the same mark_problem next tick, masking the bug.
+      // The specific submissionId must be in this user's pending list AND
+      // its problem/user must match. Matching problemId alone could pick the
+      // wrong submission if a user had multiple pendings on one problem.
+      // Throw rather than no-op: a silent no-op would let computeNextEvent
+      // re-emit the same broken event next tick and mask the bug.
       const user = state.users[event.userId];
+      const pendingSub =
+        user && user.pendingSubmissionIds.includes(event.submissionId)
+          ? ctx.submissionById[event.submissionId]
+          : undefined;
       const valid =
-        !!user &&
-        user.pendingSubmissionIds.some(
-          (id) => ctx.submissionById[id]?.problemId === event.problemId
-        );
+        !!pendingSub &&
+        pendingSub.problemId === event.problemId &&
+        pendingSub.userId === event.userId;
       if (!valid) {
         throw new Error(
           `applyEvent: mark_problem with no matching pending submission ` +
-            `(userId=${event.userId}, problemId=${event.problemId})`
+            `(userId=${event.userId}, problemId=${event.problemId}, ` +
+            `submissionId=${event.submissionId})`
         );
       }
       return { ...state, markedProblemId: event.problemId };
@@ -74,7 +77,12 @@ export function applyEvent(
     case 'resolve': {
       const submission = ctx.submissionById[event.submissionId];
       const user = state.users[event.userId];
-      if (!submission || !user) return state; // bad event — no-op
+      // The submission.userId check defends against malformed action logs
+      // (e.g. replay against a dataset with recycled submissionIds) that
+      // would otherwise credit User B's submission to User A.
+      if (!submission || !user || submission.userId !== event.userId) {
+        return state;
+      }
       const newUser = applyResolveToUser(user, submission, ctx);
       return {
         ...state,
@@ -87,9 +95,9 @@ export function applyEvent(
       return { ...state, shownImage: true, imageSrc: event.imageSrc };
 
     case 'hide_award':
-      // shownImage stays true until the next mark_user — it's a "we've already
-      // shown the award for the current user" guard that prevents
-      // computeNextEvent from looping show/hide forever.
+      // shownImage stays true until the next mark_user — the "already-shown-
+      // for-this-user" guard that stops computeNextEvent from looping
+      // show/hide forever.
       return { ...state, imageSrc: null };
 
     case 'end':
@@ -124,6 +132,10 @@ function applyResolveToUser(
       ...lastAlteringByProblem,
       [problemId]: submissionId
     };
+    // Math.max-by-submissionId works as a "latest in time" tracker only
+    // because we require submissionId to be monotonic in time (validated
+    // at parse boundary). If a future input source breaks that invariant
+    // (re-numbered IDs, recycled IDs), penalty would use the wrong time.
     lastAltering = Math.max(lastAltering, submissionId);
   } else if (submission.points === 0 && currentPoints === 0) {
     lastAlteringByProblem = {
@@ -190,9 +202,8 @@ export function computeNextEvent(
 
   if (user.pendingSubmissionIds.length > 0) {
     if (state.markedProblemId === -1) {
-      // pendingSubmissionIds is sorted by problemId at build time (see
-      // build.ts), so [0] is the default lowest-problemId choice that the
-      // old minBy(..., problemId) returned.
+      // pendingSubmissionIds is sorted by problemId at build time, so [0]
+      // is the lowest-problemId default.
       const pickedId =
         choice === undefined
           ? user.pendingSubmissionIds[0]

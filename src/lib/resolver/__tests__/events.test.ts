@@ -9,10 +9,13 @@ import {
   computeNextEvent,
   keyBy,
   mapValues,
-  minBy,
   parseInputData,
   rankUsers
 } from '..';
+// minBy is an internal helper, not part of the public surface. The test
+// uses it to assert the "lowest-problemId pending submission wins" default
+// in computeNextEvent. Imported directly from util.
+import { minBy } from '../util';
 import type {
   AwardImageMap,
   InputData,

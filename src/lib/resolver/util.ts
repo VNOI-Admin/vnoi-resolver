@@ -1,14 +1,20 @@
-// Minimal stand-ins for the four lodash helpers this codebase actually uses.
-// Function-arg style (no string-key magic) — verbose at the call site but
-// type-safe and grep-friendly.
+// Minimal lodash stand-ins. Function-arg style (no string-key magic) for
+// type safety and grep-friendliness.
 
 export function keyBy<T>(
   arr: readonly T[],
   keyFn: (item: T) => string | number
 ): Record<string, T> {
+  // Throws on duplicate keys. Silent last-wins would lose a record (CSV-to-
+  // JSON glitch, repeated import) and shift the entire downstream reveal —
+  // the operator wants to know before the show starts.
   const result: Record<string, T> = {};
   for (const item of arr) {
-    result[String(keyFn(item))] = item;
+    const key = String(keyFn(item));
+    if (key in result) {
+      throw new Error(`keyBy: duplicate key ${JSON.stringify(key)}`);
+    }
+    result[key] = item;
   }
   return result;
 }
@@ -18,8 +24,6 @@ export function mapValues<V, R>(
   fn: (value: V, key: string) => R
 ): Record<string, R> {
   const result: Record<string, R> = {};
-  // `Object.entries(obj)` types each `[k, v]` as `[string, V]` — no
-  // `undefined` like `obj[k]` would under noUncheckedIndexedAccess.
   for (const [k, v] of Object.entries(obj)) {
     result[k] = fn(v, k);
   }
@@ -30,8 +34,7 @@ export function sortBy<T>(
   arr: readonly T[],
   keyFn: (item: T) => number | string
 ): T[] {
-  // Array.prototype.sort is stable in all modern engines, matching lodash's
-  // sortBy contract.
+  // Array.prototype.sort is stable in modern engines, matching lodash.
   const sorted = [...arr];
   sorted.sort((a, b) => {
     const av = keyFn(a);
@@ -48,8 +51,6 @@ export function minBy<T>(
   fn: (item: T) => number
 ): T | undefined {
   if (arr.length === 0) return undefined;
-  // `arr[0]` typed `T | undefined` under noUncheckedIndexedAccess; we just
-  // verified length > 0 so the non-null assertion is safe.
   let best = arr[0]!;
   let bestVal = fn(best);
   for (let i = 1; i < arr.length; i++) {

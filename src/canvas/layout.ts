@@ -1,7 +1,4 @@
-// 2-row card layout (ICPC-style), sized for ceremony projection. Every
-// metric here is biased toward "readable from 6-8 m away on a 4-5 m throw"
-// rather than "compact for local browsing". Trades visible rows (~12 → ~8)
-// for legibility.
+// 2-row card layout (ICPC-style), sized for ceremony projection.
 //
 //   ┌────────────────────────────────────────────────────────────────────┐
 //   │ RANK  NAME ............................          SCORE     TIME    │  ← TOP_ROW_HEIGHT
@@ -12,13 +9,8 @@ export const TOP_ROW_HEIGHT = 48;
 export const PILL_ROW_HEIGHT = 48;
 export const CARD_HEIGHT = TOP_ROW_HEIGHT + PILL_ROW_HEIGHT;
 
-// Header is shorter than a card — just label + point-value subscript,
-// no pills to align with.
+// Shorter than a card — just label + point-value subscript, no pills.
 export const HEADER_HEIGHT = 70;
-
-// Backwards-compat alias for the few call sites (Scoreboard camera math /
-// virtualization) that talk in "row" terms.
-export const ROW_HEIGHT = CARD_HEIGHT;
 
 export const RANK_WIDTH = 100;
 export const SCORE_WIDTH = 130;
@@ -30,7 +22,6 @@ export const PILL_GAP = 2;
 export const PILL_AREA_PADDING_X = 8;
 export const PILL_MIN_WIDTH = 70;
 
-// Pill Y inside the card — centered in the bottom row.
 export const PILL_Y = TOP_ROW_HEIGHT + (PILL_ROW_HEIGHT - PILL_HEIGHT) / 2;
 
 export type Layout = {
@@ -56,8 +47,8 @@ export function computeLayout(
   x += RANK_WIDTH;
   const name = { x, w: nameWidth };
 
-  // Pills tile horizontally across the name column. Width is fluid; floored
-  // so very-many-problem contests overflow rather than shrink into illegibility.
+  // Pills tile under the name. Width is floored at PILL_MIN_WIDTH so
+  // many-problem contests overflow rather than shrink into illegibility.
   const pillAreaX = name.x + PILL_AREA_PADDING_X;
   const pillAreaW = nameWidth - PILL_AREA_PADDING_X * 2;
   const fluidPillW =

@@ -15,6 +15,16 @@
  * meaning-bearing across themes.
  */
 
+/* Universal border-box. Without this, any element with `width: 100%` plus a
+ * border overflows its container by 2× the border width, and any two buttons
+ * laid out side-by-side where only one has a border end up with mismatched
+ * outer heights. Both were visible in the share-link modal. */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
 html,
 body {
   margin: 0;
@@ -44,6 +54,95 @@ body {
 /* Canvas defaults to inline → baseline whitespace nudges the page. */
 .App canvas {
   display: block;
+}
+
+/* Audience window -------------------------------------------------------- */
+
+/* Mouse cursor auto-hides after IDLE_MS of no movement in Audience.tsx. We
+ * toggle .audience-idle on <body> from the component; the rule lives here so
+ * it survives even if React unmounts mid-show. cursor:none on the body
+ * propagates to the canvas underneath. */
+body.audience-idle,
+body.audience-idle * {
+  cursor: none !important;
+}
+
+.audience-waiting {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.audience-waiting-card {
+  max-width: 520px;
+  padding: 32px 36px;
+  background: color-mix(
+    in srgb,
+    var(--ui-surface-elevated, #111a2e) 86%,
+    transparent
+  );
+  border: 1px solid
+    color-mix(in srgb, var(--ui-accent, #22d3ee) 30%, transparent);
+  border-radius: 12px;
+  color: var(--ui-text, #e2e8f0);
+  text-align: center;
+}
+
+.audience-waiting-card h2 {
+  margin: 0 0 14px;
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.audience-waiting-card p {
+  margin: 0;
+  color: var(--ui-text-muted, #94a3b8);
+  font-size: 15px;
+  line-height: 1.55;
+}
+
+.audience-waiting-card kbd {
+  display: inline-block;
+  padding: 2px 8px;
+  background: color-mix(in srgb, var(--ui-accent, #22d3ee) 18%, transparent);
+  border: 1px solid
+    color-mix(in srgb, var(--ui-accent, #22d3ee) 40%, transparent);
+  border-radius: 4px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px;
+  color: var(--ui-text, #e2e8f0);
+}
+
+.audience-waiting-card .audience-fullscreen-btn {
+  margin: 18px 0 10px;
+  padding: 10px 22px;
+  background: var(--ui-accent, #22d3ee);
+  color: var(--ui-surface, #0b1220);
+  border: none;
+  border-radius: 8px;
+  font: inherit;
+  font-weight: 600;
+  font-size: 14px;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition:
+    transform 0.1s,
+    box-shadow 0.2s;
+}
+
+.audience-waiting-card .audience-fullscreen-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 24px
+    color-mix(in srgb, var(--ui-accent, #22d3ee) 32%, transparent);
+}
+
+.audience-waiting-card .hint {
+  margin-top: 4px;
+  font-size: 13px;
+  opacity: 0.75;
 }
 
 /* Loading splash --------------------------------------------------------- */
@@ -108,7 +207,6 @@ body {
   color: var(--ui-text, #e2e8f0);
   font: inherit;
   font-size: 14px;
-  box-sizing: border-box;
   outline: none;
   transition: border-color 0.15s;
 }

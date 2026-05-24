@@ -1,4 +1,4 @@
-// File / URL helpers shared by Loading and Ranking.
+// File / URL helpers used by the splash form (Loading.tsx).
 
 export function readJsonFile<T>(
   file: File,

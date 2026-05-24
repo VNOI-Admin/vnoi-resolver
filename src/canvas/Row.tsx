@@ -17,20 +17,25 @@ import { TEXT, useTheme } from './theme';
 import { CARD_HEIGHT, Layout, TOP_ROW_HEIGHT, formatPenalty } from './layout';
 import { Pill } from './Pill';
 import { useAnimationJob } from './animation';
+import { easeInCubic, easeOutCubic } from './easing';
+import { useAnimationSpeed } from './animationSpeed';
 
-const TWEEN_MS = 1000;
-const SCORE_TWEEN_MS = 700;
-const easeOutCubic = (t: number) => 1 - Math.pow(1 - t, 3);
+// Row Y uses ease-IN so the row visibly lingers at the just-resolved score
+// before leaving its old rank. Score / penalty count-ups use ease-OUT.
+//
+// BASE durations are at 1× and divided by AnimationSpeed at consumption.
+// 800 keeps tween < autoplay-interval (1000/speed) at every speed, leaving a
+// 200/speed settle gap before the next step — otherwise tweens chase each
+// other indefinitely.
+const TWEEN_MS_BASE = 800;
+const SCORE_TWEEN_MS_BASE = 500;
 
-// Name sits in the upper 40 px (pills tile underneath it). Rank / score / time
-// columns have nothing under them, so vertically-center those against the FULL
-// card so they don't look top-stuck with whitespace below.
+// Name sits in the upper 40px (pills tile underneath it). Side columns
+// (rank / score / time) have nothing under them, so center against the
+// FULL card to avoid top-stuck whitespace.
 const NAME_Y = TOP_ROW_HEIGHT / 2;
 const SIDE_COL_Y = CARD_HEIGHT / 2;
 
-// Sizes are biased for projector legibility from across a contest hall, not
-// for compact local viewing. Color fills depend on the active theme, so the
-// full style objects are built inside the component via useMemo.
 const USERNAME_GAP = 10;
 
 type RowProps = {
@@ -51,13 +56,11 @@ function RowInner({
   markedProblemId
 }: RowProps) {
   const theme = useTheme();
-  // Style objects bake the theme's text colors in. Pixi re-validates the text
-  // texture when the style identity changes — useMemo keeps that to one
-  // re-validation per theme change instead of one per render.
-  // Rank shares the same text color as the score (theme.colors.text). Using
-  // the accent color for rank pulled attention away from the actual numbers
-  // the audience tracks (name, score, time) — keeping rank/score/time in one
-  // color family lets the eye scan a row without distraction.
+  const speed = useAnimationSpeed();
+  const TWEEN_MS = TWEEN_MS_BASE / speed;
+  const SCORE_TWEEN_MS = SCORE_TWEEN_MS_BASE / speed;
+  // useMemo on theme so Pixi only re-validates the text texture once per
+  // theme change, not once per render.
   const rankStyle = useMemo(
     () => ({
       fontFamily: TEXT.family,
@@ -110,9 +113,8 @@ function RowInner({
   const usernameTextRef = useRef<PixiText>(null);
   const targetY = targetIndex * CARD_HEIGHT;
 
-  // Position username right after the full name, with a small gap. Width of
-  // the name text isn't known until after Pixi lays it out, so we read it
-  // synchronously in a layout effect and reposition before paint.
+  // Position username after the name. Name width isn't known until after
+  // Pixi lays it out; read in a layout effect and reposition before paint.
   useLayoutEffect(() => {
     const nameEl = nameTextRef.current;
     const userEl = usernameTextRef.current;
@@ -120,7 +122,6 @@ function RowInner({
     userEl.x = layout.name.x + 8 + nameEl.width + USERNAME_GAP;
   }, [row.fullName, layout.name.x]);
 
-  // Tween row Y when its target index changes.
   const tween = useRef<{
     fromY: number;
     toY: number;
@@ -128,7 +129,6 @@ function RowInner({
     initialized: boolean;
   }>({ fromY: targetY, toY: targetY, start: 0, initialized: false });
 
-  // Tween the displayed total score when the underlying value changes.
   const scoreTextRef = useRef<PixiText>(null);
   const scoreTween = useRef<{
     from: number;
@@ -137,8 +137,6 @@ function RowInner({
     initialized: boolean;
   }>({ from: row.total, to: row.total, start: 0, initialized: false });
 
-  // Tween the displayed penalty (seconds, float). Reformatted to HH:MM:SS each
-  // frame so the digits tick smoothly during the lerp window.
   const penaltyTextRef = useRef<PixiText>(null);
   const penaltyTween = useRef<{
     from: number;
@@ -147,30 +145,27 @@ function RowInner({
     initialized: boolean;
   }>({ from: row.penalty, to: row.penalty, start: 0, initialized: false });
 
-  // Track the most recent rounded penalty so the per-frame tween skips
-  // formatPenalty + texture regen when the visible seconds haven't ticked.
+  // Skip formatPenalty + texture regen when the visible seconds haven't
+  // changed (the underlying float may be lerping sub-second).
   const lastRenderedPenalty = useRef<number>(Math.floor(row.penalty));
 
   const job = useAnimationJob(() => {
-    // Row Y reorder.
     const el = ref.current;
     let hasYTween = false;
     if (el) {
       const { fromY, toY, start } = tween.current;
       if (fromY !== toY) {
         const t = Math.min(1, (performance.now() - start) / TWEEN_MS);
-        el.y = fromY + (toY - fromY) * easeOutCubic(t);
+        el.y = fromY + (toY - fromY) * easeInCubic(t);
         if (t >= 1) tween.current.fromY = toY;
         else hasYTween = true;
       }
-      // zIndex priority: marked row > tweening row > stationary. Marked-row-
-      // last render order in Body is the primary mechanism for keeping the
-      // marked row on top; this zIndex layer adds the per-tween lift for
-      // non-marked rows shifting past static ones.
+      // zIndex priority: marked > tweening > stationary. Marked-row-last
+      // render order in Body is the primary mechanism; this layer adds the
+      // per-tween lift for non-marked rows shifting past static ones.
       el.zIndex = isCurrent ? 2 : hasYTween ? 1 : 0;
     }
 
-    // Score tween — repaint the score text in flight.
     const scoreEl = scoreTextRef.current;
     let hasScoreTween = false;
     if (scoreEl) {
@@ -184,7 +179,6 @@ function RowInner({
       }
     }
 
-    // Penalty tween — lerp seconds, reformat to HH:MM:SS.
     const penaltyEl = penaltyTextRef.current;
     let hasPenaltyTween = false;
     if (penaltyEl) {
@@ -202,15 +196,16 @@ function RowInner({
       }
     }
 
-    // Self-stop once nothing remains to animate. Marked-row indication is now
-    // purely the static cyan bg tint in drawBg — no per-frame pulse needed.
     if (!hasYTween && !hasScoreTween && !hasPenaltyTween) {
       job.stop();
     }
   });
 
-  // Synchronous so the row never paints at y=0 before the position-init
-  // assignment lands. Subsequent targetY changes kick off a tween.
+  // Synchronous so the row never paints at y=0 before init. Also includes
+  // TWEEN_MS in deps so a mid-tween speed change re-snapshots from the
+  // CURRENT y (otherwise t = elapsed/TWEEN_MS would jump past 1 and the
+  // tween snaps to target). Idle tweens (toY === targetY, no active flight)
+  // short-circuit and don't restart.
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
@@ -224,7 +219,9 @@ function RowInner({
       };
       return;
     }
-    if (tween.current.toY === targetY) return;
+    const targetUnchanged = tween.current.toY === targetY;
+    const inFlight = tween.current.fromY !== tween.current.toY;
+    if (targetUnchanged && !inFlight) return;
     tween.current = {
       fromY: el.y,
       toY: targetY,
@@ -232,7 +229,7 @@ function RowInner({
       initialized: true
     };
     job.start();
-  }, [targetY, job]);
+  }, [targetY, job, TWEEN_MS]);
 
   useEffect(() => {
     if (!scoreTween.current.initialized) {
@@ -260,7 +257,7 @@ function RowInner({
       initialized: true
     };
     job.start();
-  }, [row.total, job]);
+  }, [row.total, job, SCORE_TWEEN_MS]);
 
   useEffect(() => {
     if (!penaltyTween.current.initialized) {
@@ -287,15 +284,8 @@ function RowInner({
       initialized: true
     };
     job.start();
-  }, [row.penalty, job]);
+  }, [row.penalty, job, SCORE_TWEEN_MS]);
 
-  // Card background: alternating stripe; marked rows get an accent tint
-  // overlay (ICPC-style full-row highlight). The 4px left accent bar of the
-  // previous layout is dropped — redundant with the full tint.
-  //
-  // Divider stays neutral (theme.colors.border) — using the accent here made
-  // the dividers compete with the header underline. Theme identity lives in
-  // the header underline + marked-row tint + pill halo, not in the dividers.
   const bgColor = theme.colors.bg;
   const bgStripeColor = theme.colors.bgStripe;
   const borderColor = theme.colors.border;
@@ -307,18 +297,13 @@ function RowInner({
       const base = targetIndex % 2 === 1 ? bgStripeColor : bgColor;
       g.rect(0, 0, layout.totalWidth, CARD_HEIGHT).fill(base);
       if (isCurrent) {
-        // Per-theme marked-row tint. Themes pick a colour + alpha that
-        // BRIGHTENS the row against their bg (cyan glow on dark, highlighter
-        // yellow on white) — using one accent for both directions would
-        // darken light themes.
+        // Per-theme tint: themes pick colour + alpha that BRIGHTENS the row
+        // against their bg (cyan on dark, highlighter yellow on white).
         g.rect(0, 0, layout.totalWidth, CARD_HEIGHT).fill({
           color: markedRowColor,
           alpha: markedRowAlpha
         });
       }
-      // Neutral divider between cards — full alpha so the row separation is
-      // unambiguous from across the hall, but still in `border` colour so it
-      // doesn't compete with the theme accent.
       g.rect(0, CARD_HEIGHT - 1, layout.totalWidth, 1).fill(borderColor);
     },
     [
@@ -359,13 +344,8 @@ function RowInner({
         anchor={{ x: 0, y: 0.5 }}
         style={usernameStyle}
       />
-      {/*
-       * The marked pill's halo extends ~5px past the pill bounds. If we
-       * rendered pills in column order, the neighbour to the right would
-       * paint over that overflow and clip it. So: render every non-marked
-       * pill first, then the marked one last (z-on-top). Same belt-and-
-       * suspenders pattern as Body's marked-row-last render order.
-       */}
+      {/* The marked pill's halo overflows by ~5px; render non-marked pills
+          first, marked one last so the halo isn't clipped by the neighbour. */}
       {problems.map((problem, i) => {
         const isMarked = isCurrent && problem.problemId === markedProblemId;
         if (isMarked) return null;
@@ -428,11 +408,10 @@ function RowInner({
   );
 }
 
-// `rankUsers` rebuilds `row` (a UserRow) every dispatch via `{ ...user, total,
-// rank: '' }`, so the default shallow compare would say "different" every
-// render. Compare the fields that actually affect rendering. `points`,
-// `status`, `scoreClass` are inner refs shared with InternalUser — same ref
-// across renders when this row wasn't resolved, so the comparison is O(1).
+// rankUsers rebuilds every UserRow each dispatch, so shallow compare would
+// always say "different". Compare the fields that actually affect render.
+// points/status/scoreClass are inner refs shared with InternalUser — same
+// reference when this row wasn't resolved, so this stays O(1).
 function rowEqual(a: RowProps, b: RowProps): boolean {
   return (
     a.targetIndex === b.targetIndex &&

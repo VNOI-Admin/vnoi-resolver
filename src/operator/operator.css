@@ -1,0 +1,779 @@
+/* Operator console.
+ *
+ * Theme-aware via the same --ui-* CSS vars as the rest of the app. Density
+ * is the primary visual decision: every cell earns its inches. NEXT pane
+ * carries the visual emphasis (largest text, most space); STATUS strip and
+ * TRANSPORT row are tight. NOW + QUEUE sit either side of NEXT as
+ * supporting context.
+ *
+ * Anti-anchor: this is NOT a SaaS dashboard. No gradient backgrounds, no
+ * card grids, no decorative shadow, no emoji-icon header rows. Closer to a
+ * broadcast control surface (OBS, Reaper) than to Linear / Notion.
+ */
+
+.operator-console {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  height: 100%;
+  background: var(--ui-surface, #0b1220);
+  color: var(--ui-text, #e2e8f0);
+  font-feature-settings:
+    'tnum' 1,
+    'cv11' 1;
+}
+
+/* --- Status strip ------------------------------------------------------- */
+
+.op-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 8px 20px;
+  border-bottom: 1px solid
+    color-mix(in srgb, var(--ui-border, #94a3b8) 35%, transparent);
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  color: var(--ui-text-muted, #94a3b8);
+}
+
+.op-status-left,
+.op-status-right {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+
+.op-status-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.op-status-cursor {
+  font-variant-numeric: tabular-nums;
+}
+
+.op-status-num {
+  color: var(--ui-text, #e2e8f0);
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.op-status-num-muted {
+  color: var(--ui-text-muted, #94a3b8);
+  font-weight: 400;
+}
+
+/* Previewed cursor shown alongside the live one while hovering queue/
+ * timeline. Tinted to the accent so it visibly differs from the live
+ * cursor number without being so loud it dominates the strip. */
+.op-status-num-preview {
+  color: var(--ui-accent, #22d3ee);
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.op-status-preview-tag {
+  color: var(--ui-accent, #22d3ee);
+  font-weight: 500;
+  letter-spacing: 0.04em;
+}
+
+.op-status-sep {
+  opacity: 0.5;
+}
+
+.op-conn {
+  letter-spacing: 0.04em;
+  text-transform: lowercase;
+}
+
+.op-conn-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ui-text-muted, #94a3b8);
+  transition: background 0.2s;
+}
+
+.op-conn-live .op-conn-dot {
+  background: var(--ui-accent, #22d3ee);
+  box-shadow: 0 0 0 2px
+    color-mix(in srgb, var(--ui-accent, #22d3ee) 25%, transparent);
+}
+
+.op-theme-pill {
+  appearance: none;
+  background: color-mix(in srgb, var(--ui-text-muted, #94a3b8) 8%, transparent);
+  border: 1px solid
+    color-mix(in srgb, var(--ui-border, #94a3b8) 30%, transparent);
+  border-radius: 5px;
+  padding: 3px 9px;
+  color: var(--ui-text-muted, #94a3b8);
+  font: inherit;
+  font-size: 11px;
+  letter-spacing: 0.05em;
+  cursor: pointer;
+  transition:
+    background 0.15s,
+    color 0.15s;
+}
+
+.op-theme-pill:hover {
+  background: color-mix(in srgb, var(--ui-accent, #22d3ee) 14%, transparent);
+  color: var(--ui-text, #e2e8f0);
+}
+
+/* --- Three panes -------------------------------------------------------- */
+
+.op-panes {
+  display: grid;
+  grid-template-columns: 24fr 46fr 30fr;
+  gap: 1px;
+  background: color-mix(in srgb, var(--ui-border, #94a3b8) 30%, transparent);
+  overflow: hidden;
+  min-height: 0;
+}
+
+.op-pane {
+  background: var(--ui-surface, #0b1220);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.op-pane-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 20px 8px;
+}
+
+.op-pane-eyebrow {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ui-text-muted, #94a3b8);
+}
+
+.op-pane-tag {
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  padding: 2px 7px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--ui-accent, #22d3ee) 18%, transparent);
+  color: var(--ui-text, #e2e8f0);
+}
+
+.op-pane-tag-preview {
+  background: color-mix(
+    in srgb,
+    var(--ui-text-muted, #94a3b8) 18%,
+    transparent
+  );
+}
+
+.op-pane-body {
+  padding: 8px 24px 24px;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* --- NOW pane ----------------------------------------------------------- */
+
+.op-pane-now .op-now-user {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.op-now-user-name {
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.op-now-user-handle {
+  color: var(--ui-text-muted, #94a3b8);
+  font-size: 14px;
+}
+
+.op-now-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--ui-text-muted, #94a3b8);
+  font-variant-numeric: tabular-nums;
+}
+
+.op-now-idle {
+  color: var(--ui-text-muted, #94a3b8);
+  font-size: 13px;
+  font-style: italic;
+}
+
+.op-now-last {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-top: 12px;
+  border-top: 1px solid
+    color-mix(in srgb, var(--ui-border, #94a3b8) 25%, transparent);
+}
+
+.op-now-eyebrow {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ui-text-muted, #94a3b8);
+}
+
+.op-now-last-line {
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.op-now-last-points {
+  font-size: 12px;
+  color: var(--ui-text-muted, #94a3b8);
+  font-variant-numeric: tabular-nums;
+}
+
+.op-sep {
+  opacity: 0.4;
+}
+
+/* --- NEXT pane (the star) ----------------------------------------------- */
+
+.op-pane-next .op-pane-body {
+  gap: 16px;
+}
+
+.op-next-headline {
+  font-size: 28px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  line-height: 1.15;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.op-next-bolt {
+  font-size: 18px;
+  color: var(--ui-accent, #22d3ee);
+}
+
+.op-next-points {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+.op-next-points-num {
+  font-size: 36px;
+  font-weight: 600;
+  color: var(--ui-accent, #22d3ee);
+  letter-spacing: -0.02em;
+}
+
+.op-next-points-sep {
+  color: var(--ui-text-muted, #94a3b8);
+  font-size: 22px;
+  margin: 0 2px;
+}
+
+.op-next-points-num-muted {
+  color: var(--ui-text-muted, #94a3b8);
+  font-size: 22px;
+  font-weight: 400;
+}
+
+.op-next-points-label {
+  color: var(--ui-text-muted, #94a3b8);
+  font-size: 13px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin-left: 6px;
+}
+
+.op-next-rankcontext {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 13px;
+  color: var(--ui-text-muted, #94a3b8);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Rank-shift cell, only meaningful when there's a projection. Bold + bright
+ * when the rank actually moves so the operator's eye snaps to it. */
+.op-next-rank-shifts {
+  color: var(--ui-text, #e2e8f0);
+  font-weight: 600;
+}
+
+/* Award-image preview shown when the next event is `show_award`. Fills the
+ * available NEXT-pane height so the operator can SEE what's about to land
+ * on the audience screen and brace for the room's reaction. Centered;
+ * preserves aspect ratio via object-fit: contain so portrait + landscape
+ * source images both look right. Subtle border + soft shadow so it reads
+ * as a card without competing with the rest of the surface. */
+.op-next-award {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 0;
+}
+
+.op-next-award-img {
+  max-width: 100%;
+  max-height: 100%;
+  border-radius: 8px;
+  border: 1px solid
+    color-mix(in srgb, var(--ui-border, #94a3b8) 35%, transparent);
+  box-shadow: 0 8px 32px
+    color-mix(in srgb, var(--ui-accent, #22d3ee) 14%, transparent);
+  object-fit: contain;
+}
+
+.op-next-key {
+  margin-top: auto;
+  padding-top: 12px;
+  border-top: 1px solid
+    color-mix(in srgb, var(--ui-border, #94a3b8) 25%, transparent);
+}
+
+.op-next-key-hint {
+  font-size: 12px;
+  color: var(--ui-text-muted, #94a3b8);
+}
+
+/* During a queue/timeline preview, the hotkey hint switches to this muted
+ * form to signal "this is informational, the keys won't fire against the
+ * previewed event". Paired with the muted kbd chips in .op-chooser-list-preview
+ * below. */
+.op-next-key-hint-muted {
+  opacity: 0.55;
+  font-style: italic;
+}
+
+/* Chooser (NEXT pane when there are 2+ pending submissions) */
+
+.op-chooser-head {
+  font-size: 13px;
+  color: var(--ui-text-muted, #94a3b8);
+}
+
+.op-chooser-head strong {
+  color: var(--ui-text, #e2e8f0);
+  font-weight: 600;
+}
+
+.op-chooser-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* Chooser rendered during a queue/timeline preview: the 1–9 hotkeys are
+ * intentionally dormant (they'd target the live cursor, not the previewed
+ * event). Slightly desaturate the whole list to signal "informational
+ * only". The per-kbd muting below is the more pointed cue. */
+.op-chooser-list-preview {
+  opacity: 0.85;
+}
+
+.op-chooser-key-muted {
+  opacity: 0.5;
+  /* Hatch-stripe the kbd background so it reads as inert at a glance. */
+  background: repeating-linear-gradient(
+    45deg,
+    color-mix(in srgb, var(--ui-text, #e2e8f0) 8%, transparent),
+    color-mix(in srgb, var(--ui-text, #e2e8f0) 8%, transparent) 3px,
+    transparent 3px,
+    transparent 6px
+  );
+}
+
+.op-chooser-item {
+  /* key | code | name | pts | rank-delta | (default tag) */
+  display: grid;
+  grid-template-columns: auto auto 1fr auto auto auto;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--ui-text-muted, #94a3b8) 5%, transparent);
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+
+.op-chooser-item-default {
+  background: color-mix(in srgb, var(--ui-accent, #22d3ee) 14%, transparent);
+}
+
+.op-chooser-item-zero {
+  opacity: 0.55;
+}
+
+.op-chooser-key {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--ui-text, #e2e8f0) 10%, transparent);
+  border: 1px solid
+    color-mix(in srgb, var(--ui-border, #94a3b8) 30%, transparent);
+  color: var(--ui-text, #e2e8f0);
+}
+
+.op-chooser-code {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.op-chooser-name {
+  color: var(--ui-text-muted, #94a3b8);
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.op-chooser-pts {
+  font-size: 13px;
+  color: var(--ui-text, #e2e8f0);
+}
+
+/* Rank-shift column. Muted when the rank doesn't change (low-impact reveal);
+ * full text + accent arrow when it does. The arrow character is rendered by
+ * formatRankDelta in the cell text — colour comes from the whole cell. */
+.op-chooser-rank {
+  font-size: 12px;
+  color: var(--ui-text-muted, #94a3b8);
+  min-width: 84px;
+  text-align: right;
+}
+
+.op-chooser-rank-shifts {
+  color: var(--ui-text, #e2e8f0);
+  font-weight: 600;
+}
+
+.op-chooser-tag {
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ui-accent, #22d3ee);
+  font-weight: 600;
+}
+
+/* End-of-reveal NEXT pane */
+
+.op-pane-next-end .op-pane-body {
+  align-items: flex-start;
+}
+
+.op-end-headline {
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--ui-text, #e2e8f0);
+}
+
+.op-end-podium {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+
+.op-end-podium li {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 14px;
+  align-items: baseline;
+  padding: 8px 14px;
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--ui-text-muted, #94a3b8) 6%, transparent);
+  font-variant-numeric: tabular-nums;
+}
+
+.op-end-podium li:first-child {
+  background: color-mix(in srgb, var(--ui-accent, #22d3ee) 14%, transparent);
+}
+
+.op-end-rank {
+  font-weight: 600;
+  font-size: 15px;
+  color: var(--ui-text-muted, #94a3b8);
+}
+
+.op-end-name {
+  font-weight: 500;
+}
+
+.op-end-pts {
+  font-weight: 600;
+  font-size: 16px;
+}
+
+.op-end-hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--ui-text-muted, #94a3b8);
+}
+
+/* --- QUEUE pane --------------------------------------------------------- */
+
+.op-queue-body {
+  padding-top: 4px;
+}
+
+.op-queue-empty {
+  color: var(--ui-text-muted, #94a3b8);
+  font-size: 13px;
+  font-style: italic;
+}
+
+.op-queue-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.op-queue-item {
+  display: grid;
+  grid-template-columns: auto 1fr auto auto;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 12px;
+  font-size: 13px;
+  border-radius: 4px;
+  cursor: default;
+  transition: background 0.12s;
+}
+
+.op-queue-item:hover {
+  background: color-mix(in srgb, var(--ui-text, #e2e8f0) 6%, transparent);
+}
+
+.op-queue-item-imminent {
+  background: color-mix(in srgb, var(--ui-accent, #22d3ee) 6%, transparent);
+}
+
+.op-queue-item-imminent:hover {
+  background: color-mix(in srgb, var(--ui-accent, #22d3ee) 12%, transparent);
+}
+
+.op-queue-num {
+  font-variant-numeric: tabular-nums;
+  color: var(--ui-text-muted, #94a3b8);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  min-width: 28px;
+}
+
+.op-queue-desc {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.op-queue-pts {
+  font-variant-numeric: tabular-nums;
+  color: var(--ui-text-muted, #94a3b8);
+  font-size: 12px;
+}
+
+.op-queue-badge {
+  font-size: 14px;
+}
+
+.op-queue-item-dramatic .op-queue-desc {
+  color: var(--ui-text, #e2e8f0);
+}
+
+/* --- Bottom band: timeline + transport ---------------------------------- */
+
+.op-bottom {
+  border-top: 1px solid
+    color-mix(in srgb, var(--ui-border, #94a3b8) 35%, transparent);
+  padding: 14px 20px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* Timeline. 1px bar across the full width. Hover-to-preview, no commit on
+ * click — see Timeline.tsx for the contract. */
+.op-timeline {
+  position: relative;
+  height: 22px;
+  cursor: crosshair;
+  /* Padding-y inside the row gives the cursor + ticks vertical room without
+   * blowing up the actual line weight of the track. */
+  padding: 10px 0;
+}
+
+.op-timeline-track {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 1px;
+  background: color-mix(in srgb, var(--ui-border, #94a3b8) 45%, transparent);
+}
+
+.op-timeline-fill {
+  position: absolute;
+  left: 0;
+  top: 50%;
+  height: 1px;
+  background: color-mix(in srgb, var(--ui-accent, #22d3ee) 50%, transparent);
+  transition: width 0.18s ease-out;
+}
+
+.op-timeline-tick-award {
+  position: absolute;
+  top: calc(50% - 4px);
+  width: 2px;
+  height: 8px;
+  margin-left: -1px;
+  background: var(--ui-accent, #22d3ee);
+  border-radius: 1px;
+}
+
+.op-timeline-cursor {
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--ui-accent, #22d3ee);
+  border-radius: 1px;
+}
+
+.op-timeline-cursor-preview {
+  background: var(--ui-text-muted, #94a3b8);
+  opacity: 0.7;
+}
+
+/* Transport: rollback / play-pause / step + speed slider. */
+
+.op-transport {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.op-transport-btn-group {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.op-transport-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 14px;
+  background: color-mix(in srgb, var(--ui-text, #e2e8f0) 5%, transparent);
+  border: 1px solid
+    color-mix(in srgb, var(--ui-border, #94a3b8) 30%, transparent);
+  border-radius: 6px;
+  color: var(--ui-text, #e2e8f0);
+  cursor: pointer;
+  font: inherit;
+  transition:
+    background 0.12s,
+    border-color 0.12s;
+}
+
+.op-transport-btn:hover {
+  background: color-mix(in srgb, var(--ui-text, #e2e8f0) 10%, transparent);
+  border-color: color-mix(in srgb, var(--ui-accent, #22d3ee) 40%, transparent);
+}
+
+.op-transport-btn-primary {
+  background: color-mix(in srgb, var(--ui-accent, #22d3ee) 18%, transparent);
+  border-color: color-mix(in srgb, var(--ui-accent, #22d3ee) 45%, transparent);
+}
+
+.op-transport-btn-primary:hover {
+  background: color-mix(in srgb, var(--ui-accent, #22d3ee) 28%, transparent);
+}
+
+.op-transport-glyph {
+  font-size: 16px;
+  line-height: 1;
+}
+
+.op-transport-key {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 9.5px;
+  padding: 1px 5px;
+  border-radius: 2px;
+  background: color-mix(
+    in srgb,
+    var(--ui-text-muted, #94a3b8) 18%,
+    transparent
+  );
+  color: var(--ui-text-muted, #94a3b8);
+  letter-spacing: 0.05em;
+}
+
+.op-transport-speed {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--ui-text-muted, #94a3b8);
+}
+
+.op-transport-speed-label {
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-size: 10px;
+}
+
+.op-transport-speed input[type='range'] {
+  width: 140px;
+  accent-color: var(--ui-accent, #22d3ee);
+}
+
+.op-transport-speed-num {
+  color: var(--ui-text, #e2e8f0);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  min-width: 36px;
+  text-align: right;
+}

@@ -14,11 +14,12 @@ import { ProblemAttemptStatus } from '../lib/resolver';
 import { TEXT, useTheme } from './theme';
 import { PILL_HEIGHT, PILL_Y } from './layout';
 import { useAnimationJob } from './animation';
+import { easeOutCubic } from './easing';
+import { useAnimationSpeed } from './animationSpeed';
 
-const COLOR_TWEEN_MS = 500;
-// Rounded rectangle rather than fully-rounded stadium — adjacent pills read
-// as a tight band instead of drifting capsules. Slightly larger radius than
-// before to match the taller PILL_HEIGHT.
+const COLOR_TWEEN_MS_BASE = 500;
+// Rounded rect (not stadium) so adjacent pills read as a tight band instead
+// of drifting capsules.
 const PILL_RADIUS = 8;
 
 const SCORE_LABEL_STYLE = {
@@ -42,8 +43,6 @@ function lerpColor(a: number, b: number, t: number): number {
   );
 }
 
-const easeOutCubic = (t: number) => 1 - Math.pow(1 - t, 3);
-
 function PillInner({
   x,
   w,
@@ -65,8 +64,9 @@ function PillInner({
   const isPending = !!(status & ProblemAttemptStatus.PENDING);
   const isUnattempted = status === ProblemAttemptStatus.UNATTEMPTED;
   const targetColor = theme.pillColorForClass(scoreClass, isPending);
+  const speed = useAnimationSpeed();
+  const COLOR_TWEEN_MS = COLOR_TWEEN_MS_BASE / speed;
 
-  // Unattempted label style depends on textMuted, which is theme-dependent.
   const unattemptedLabelStyle = useMemo(
     () => ({
       fontFamily: TEXT.family,
@@ -77,7 +77,6 @@ function PillInner({
     [theme]
   );
 
-  // --- Color tween ------------------------------------------------------
   const colorTween = useRef<{
     fromColor: number;
     toColor: number;
@@ -90,7 +89,6 @@ function PillInner({
     initialized: false
   });
 
-  // --- Halo for the marked problem --------------------------------------
   const haloRef = useRef<PixiContainer>(null);
   const phaseStart = useRef<number | null>(null);
   const pillGfxRef = useRef<PixiGraphics>(null);
@@ -114,7 +112,6 @@ function PillInner({
   );
 
   const job = useAnimationJob(() => {
-    // Halo pulse.
     const halo = haloRef.current;
     if (halo && highlighted) {
       if (phaseStart.current === null) phaseStart.current = performance.now();
@@ -123,7 +120,6 @@ function PillInner({
       halo.alpha = 0.1 + 0.35 * (1 - Math.cos(t));
     }
 
-    // Color tween — repaint with interpolated color when in flight.
     const g = pillGfxRef.current;
     let colorActive = false;
     if (g) {
@@ -137,7 +133,6 @@ function PillInner({
       }
     }
 
-    // Self-stop when nothing is animating.
     if (!colorActive && !highlighted) {
       job.stop();
     }
@@ -153,7 +148,10 @@ function PillInner({
       };
       return;
     }
-    if (colorTween.current.toColor === targetColor) return;
+    const targetUnchanged = colorTween.current.toColor === targetColor;
+    const inFlight =
+      colorTween.current.fromColor !== colorTween.current.toColor;
+    if (targetUnchanged && !inFlight) return;
     const t = Math.min(
       1,
       (performance.now() - colorTween.current.start) / COLOR_TWEEN_MS
@@ -170,10 +168,10 @@ function PillInner({
       initialized: true
     };
     job.start();
-  }, [targetColor, job]);
+  }, [targetColor, job, COLOR_TWEEN_MS]);
 
-  // Halo needs the job running while highlighted. Reset alpha synchronously
-  // on the trailing edge so the job can self-stop without leaving the halo lit.
+  // Reset alpha synchronously on the trailing edge so the job can self-stop
+  // without leaving the halo lit.
   useLayoutEffect(() => {
     if (highlighted) {
       job.start();
@@ -198,8 +196,8 @@ function PillInner({
     [x, w, accentColor]
   );
 
-  // Static-state paint when not tweening — Pixi calls this when the draw prop
-  // identity changes (i.e. on prop changes that affect the pill shape/color).
+  // Static paint when not tweening. Pixi calls this when the draw prop
+  // identity changes (i.e. on prop changes affecting shape/color).
   const drawPill = useCallback(
     (g: PixiGraphics) => {
       const { fromColor, toColor } = colorTween.current;
@@ -209,10 +207,6 @@ function PillInner({
     [repaintPill, targetColor]
   );
 
-  // Label rules:
-  //   - unattempted        → problem code (muted, 50% alpha)
-  //   - pending (resolved-yet-unrevealed) → `{points}?`
-  //   - else               → score number
   const label = isUnattempted
     ? problemCode
     : isPending
@@ -237,6 +231,5 @@ function PillInner({
   );
 }
 
-// All Pill props are primitives, so the default shallow-compare correctly
-// skips re-renders when nothing changed on this column.
+// All props are primitives — default shallow-compare is correct.
 export const Pill = memo(PillInner);

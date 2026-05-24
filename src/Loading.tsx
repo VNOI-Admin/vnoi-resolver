@@ -12,6 +12,7 @@ import Select, { MultiValue } from 'react-select';
 
 import { InputData, AwardImageMap, parseInputData } from './resolver';
 import { readJsonFile, urlBasename } from './util/files';
+import { DEFAULT_FROZEN_TIME_MIN } from './util/urlConfig';
 
 type DropKind = 'data' | 'image';
 
@@ -46,30 +47,25 @@ export function Loading({
   const [dragOver, setDragOver] = useState<DropKind | null>(null);
   const [dataFileName, setDataFileName] = useState<string | null>(null);
   const [imageFileName, setImageFileName] = useState<string | null>(null);
-  // True until every `?data=` / `?image=` fetch from the URL has settled
-  // (success or failure). Gates the Run button so the user can't proceed
-  // before the image arrives, which would otherwise mean awards silently
-  // render without art.
+  // Gates the Run button until every ?data= / ?image= fetch has settled,
+  // so awards don't silently render without art.
   const [urlFetchPending, setUrlFetchPending] = useState<boolean>(
     !!dataUrl || !!imageUrl
   );
 
-  // Share-link modal state. Pre-fill from the URL the page was opened with
-  // (if any) so a recipient re-sharing the same contest doesn't have to
-  // re-type the hosted URLs.
+  // Pre-fill from ?data= / ?image= so a recipient re-sharing doesn't have
+  // to re-type the hosted URLs.
   const [showShareModal, setShowShareModal] = useState(false);
   const [shareDataUrl, setShareDataUrl] = useState(dataUrl ?? '');
   const [shareImageUrl, setShareImageUrl] = useState(imageUrl ?? '');
   const [copyToast, setCopyToast] = useState<string | null>(null);
 
-  // Live-update preview URL. Includes ceremony settings even if no data URL
-  // is provided — the recipient sees a pre-filled loading screen and has to
-  // upload their own files.
   const generatedShareUrl = useMemo(() => {
     const params: Record<string, string> = {};
     if (shareDataUrl) params.data = shareDataUrl;
     if (shareImageUrl) params.image = shareImageUrl;
-    if (frozenTime !== 240) params.frozenTime = String(frozenTime);
+    if (frozenTime !== DEFAULT_FROZEN_TIME_MIN)
+      params.frozenTime = String(frozenTime);
     if (unofficialContestants.length > 0)
       params.unofficial = unofficialContestants.join(',');
     if (!hideUnofficialContestants) params.hideUnofficial = '0';
@@ -84,8 +80,6 @@ export function Loading({
     hideUnofficialContestants
   ]);
 
-  // Track the pending toast timer so unmount (or rapid re-clicks) doesn't
-  // leave stale timers firing setState on an unmounted component.
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     return () => {
@@ -137,9 +131,7 @@ export function Loading({
     [setImageData]
   );
 
-  // Auto-fetch data/image when the page is opened with `?data=...` / `?image=...`.
-  // Data and image are independent — image is documented as optional in the
-  // share-link modal, so a data-only URL must still load.
+  // Image is optional; data-only URLs must still load.
   useEffect(() => {
     if (!dataUrl && !imageUrl) return;
     let cancelled = false;
@@ -226,10 +218,8 @@ export function Loading({
     [inputData]
   );
 
-  // Track dragenter/dragleave with a counter — `dragleave` fires on every
-  // child boundary crossing, so the "leave the whole dropzone" event can't be
-  // identified by inspecting `target`. Counting enters vs leaves makes it
-  // robust against hovering over child elements.
+  // dragleave fires on every child boundary, so we count enters vs leaves
+  // to identify the "leave the whole dropzone" event.
   const dragDepth = useRef<Record<DropKind, number>>({ data: 0, image: 0 });
   const dropHandlers = useCallback(
     (kind: DropKind, loader: (f: File) => void) => ({

@@ -1,12 +1,8 @@
 import { useEffect, useRef } from 'react';
 
 /**
- * Subscribe a callback to keydown events for a specific key. The callback is
- * stored in a ref so it can change between renders without re-attaching the
- * window listener.
- *
- * When `enabled` is false the handler is suppressed but the listener stays
- * attached — toggling `enabled` won't churn the window listener either.
+ * Subscribe to keydown for a key. Refs let callback/enabled change without
+ * re-attaching the window listener.
  */
 export function useKeyPress(
   targetKey: string,
@@ -24,15 +20,13 @@ export function useKeyPress(
   }, [enabled]);
 
   useEffect(() => {
-    // Case-insensitive compare so caps lock (and Shift+letter) still match.
-    // No-op for non-letter keys (ArrowLeft / ' ' / digits etc.).
+    // Case-insensitive so caps-lock + Shift+letter still match.
     const target = targetKey.toLowerCase();
     function downHandler(e: KeyboardEvent): void {
       if (e.key.toLowerCase() !== target) return;
       if (!enabledRef.current) return;
-      // Don't steal keys from a focused form control — otherwise focusing the
-      // speed slider and pressing arrow keys both adjusts the slider AND
-      // dispatches a step. Same hazard for digits in number inputs.
+      // Don't steal from focused form controls — otherwise the speed slider
+      // would both move AND dispatch a step on arrow keys.
       const t = e.target as HTMLElement | null;
       if (
         t &&

@@ -9,9 +9,12 @@ import {
   keyBy,
   mapValues,
   parseInputData,
-  processSubmissions,
   rankUsers
 } from '..';
+// processSubmissions is intentionally NOT part of the public surface — it's a
+// build-time helper the integration test still exercises to validate the
+// "build a private + a public state and compare" flow used by buildInitialState.
+import { processSubmissions } from '../build';
 import type {
   InputData,
   InternalState,

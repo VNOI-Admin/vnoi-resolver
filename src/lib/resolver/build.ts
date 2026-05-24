@@ -56,12 +56,11 @@ export function processSubmissions({
 
   for (const submission of sorted) {
     const user = state.users[submission.userId];
-    if (!user) continue; // submission references a user outside this contest
+    if (!user) continue; // user outside this contest
     const problemId = submission.problemId;
     const submissionId = submission.submissionId;
-    // `points` / `submissionIdsByProblemId` are initialised above from
-    // pointByProblemId via mapValues, so every problemId in problemById has
-    // an entry. A submission for an unknown problemId is ignored here.
+    // user.points has every problemId in problemById, so undefined = unknown
+    // problem (ignored).
     const userPoints = user.points[problemId];
     if (userPoints === undefined) continue;
 
@@ -145,8 +144,8 @@ export function buildInitialState({
     submissionById
   });
 
-  // Iterate in defined order — `for..in` on a numeric-keyed object uses
-  // implementation-defined ordering, which makes pending-sub order non-deterministic.
+  // Iterate input-array order so the reveal addresses users as the contest
+  // organizer intended, not by numeric userId order.
   for (const { userId } of inputData.users) {
     const publicUser = publicState.users[userId];
     const privateUser = privateState.users[userId];
@@ -169,8 +168,6 @@ export function buildInitialState({
 
     publicUser.pendingSubmissionIds = sortBy(
       publicUser.pendingSubmissionIds,
-      // Pending ids were just sourced from submissionIdsByProblemId so they
-      // are guaranteed to exist in `submissionById`.
       (id) => submissionById[id]!.problemId
     );
   }
