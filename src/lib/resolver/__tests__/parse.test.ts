@@ -21,8 +21,8 @@ describe('parseInputData', () => {
       ]
     };
     const parsed = parseInputData(raw);
-    expect(parsed.submissions[0].time).toBeCloseTo(2342.178705);
-    expect(typeof parsed.submissions[0].time).toBe('number');
+    expect(parsed.submissions[0]!.time).toBeCloseTo(2342.178705);
+    expect(typeof parsed.submissions[0]!.time).toBe('number');
   });
 
   it('leaves numeric times untouched', () => {
@@ -38,7 +38,7 @@ describe('parseInputData', () => {
         }
       ]
     };
-    expect(parseInputData(raw).submissions[0].time).toBe(67.5);
+    expect(parseInputData(raw).submissions[0]!.time).toBe(67.5);
   });
 
   it('preserves users and problems arrays by reference shape', () => {
@@ -70,5 +70,57 @@ describe('parseInputData', () => {
   it('returns empty submissions when given empty', () => {
     const parsed = parseInputData({ ...baseShape, submissions: [] });
     expect(parsed.submissions).toEqual([]);
+  });
+
+  it('throws on a non-numeric time', () => {
+    const raw = {
+      ...baseShape,
+      submissions: [
+        {
+          submissionId: 42,
+          userId: 1,
+          problemId: 10,
+          time: 'not-a-number',
+          points: 0
+        }
+      ]
+    };
+    expect(() => parseInputData(raw)).toThrow(
+      /submission 42 has a non-numeric time/
+    );
+  });
+
+  it('throws on a NaN time', () => {
+    const raw = {
+      ...baseShape,
+      submissions: [
+        { submissionId: 1, userId: 1, problemId: 10, time: NaN, points: 0 }
+      ]
+    };
+    expect(() => parseInputData(raw)).toThrow(/non-numeric time/);
+  });
+
+  it('throws on an Infinity time', () => {
+    const raw = {
+      ...baseShape,
+      submissions: [
+        {
+          submissionId: 1,
+          userId: 1,
+          problemId: 10,
+          time: Infinity,
+          points: 0
+        }
+      ]
+    };
+    expect(() => parseInputData(raw)).toThrow(/non-numeric time/);
+  });
+
+  it('throws when submissions is missing entirely', () => {
+    // Documents current behavior: parseInputData assumes a `submissions` array.
+    // A missing one currently surfaces as a downstream TypeError on `.map`.
+    // (We treat the surface here as a contract rather than a guard, so the
+    // throw type is intentionally loose.)
+    expect(() => parseInputData(baseShape as unknown)).toThrow();
   });
 });

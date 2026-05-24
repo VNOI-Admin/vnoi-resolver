@@ -1,37 +1,41 @@
-import _ from 'lodash';
 import { InternalState, UserRow } from './types';
+import { sortBy } from './util';
 
 export function rankUsers(
   state: InternalState,
   unofficialContestants: string[]
 ): UserRow[] {
-  // Pre-sort by userId so the {total, penalty} tie-break in _.orderBy is
+  // Pre-sort by userId so the {total, penalty} tie-break below is
   // deterministic even on engines whose numeric-key iteration order differs.
-  const sortedUsers = _.sortBy(_.values(state.users), 'userId');
-  const rows = _.orderBy(
-    sortedUsers.map((user) => {
-      const total = _.sum(_.values(user.points));
+  const sortedUsers = sortBy(Object.values(state.users), (u) => u.userId);
+  const rows = sortedUsers
+    .map((user) => {
+      let total = 0;
+      for (const v of Object.values(user.points)) total += v;
       return { ...user, total, rank: '' };
-    }),
-    ['total', 'penalty'],
-    ['desc', 'asc']
-  );
+    })
+    // Higher total first; ties broken by lower penalty. Array.sort is stable,
+    // so equal-(total,penalty) rows keep their userId-ordered position.
+    .sort((a, b) => b.total - a.total || a.penalty - b.penalty);
+
+  // O(1) lookup instead of O(U) Array.includes — rankUsers is called inside
+  // precomputeFrom's hot loop, so this saves O(U·N) per build.
+  const unofficialSet = new Set(unofficialContestants);
 
   let lastTotal = -1;
   let lastPenalty = -1;
   let rank = 0;
   let cnt = 0;
   for (let i = 0; i < rows.length; i++) {
-    if (unofficialContestants.includes(rows[i].username)) {
-      continue;
-    }
+    const row = rows[i]!; // i < rows.length
+    if (unofficialSet.has(row.username)) continue;
     cnt += 1;
-    if (rows[i].total !== lastTotal || rows[i].penalty !== lastPenalty) {
+    if (row.total !== lastTotal || row.penalty !== lastPenalty) {
       rank = cnt;
-      lastTotal = rows[i].total;
-      lastPenalty = rows[i].penalty;
+      lastTotal = row.total;
+      lastPenalty = row.penalty;
     }
-    rows[i].rank = rank.toString();
+    row.rank = rank.toString();
   }
 
   return rows;

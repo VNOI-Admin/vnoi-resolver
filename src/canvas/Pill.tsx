@@ -1,5 +1,4 @@
-import { useCallback, useEffect, useRef } from 'react';
-import { useTick } from '@pixi/react';
+import { memo, useCallback, useEffect, useLayoutEffect, useRef } from 'react';
 import type {
   Container as PixiContainer,
   Graphics as PixiGraphics
@@ -12,8 +11,16 @@ import {
   PROBLEM_WIDTH,
   ROW_HEIGHT
 } from './layout';
+import { useAnimationJob } from './animation';
 
 const COLOR_TWEEN_MS = 500;
+
+const LABEL_STYLE = {
+  fontFamily: TEXT.family,
+  fontSize: TEXT.pillSize,
+  fontWeight: 'bold' as const,
+  fill: 0xffffff
+};
 
 function lerpColor(a: number, b: number, t: number): number {
   const ar = (a >> 16) & 0xff;
@@ -31,7 +38,7 @@ function lerpColor(a: number, b: number, t: number): number {
 
 const easeOutCubic = (t: number) => 1 - Math.pow(1 - t, 3);
 
-export function Pill({
+function PillInner({
   x,
   points,
   status,
@@ -64,6 +71,50 @@ export function Pill({
     initialized: false
   });
 
+  // --- Halo for the marked problem --------------------------------------
+  const haloRef = useRef<PixiContainer>(null);
+  const phaseStart = useRef<number | null>(null);
+  const pillGfxRef = useRef<PixiGraphics>(null);
+
+  const repaintPill = useCallback(
+    (g: PixiGraphics, color: number) => {
+      g.clear();
+      if (isUnattempted) return;
+      g.roundRect(pillX, pillY, pillW, PILL_HEIGHT, 11).fill({ color });
+    },
+    [isUnattempted, pillX, pillY, pillW]
+  );
+
+  const job = useAnimationJob(() => {
+    // Halo pulse.
+    const halo = haloRef.current;
+    if (halo && highlighted) {
+      if (phaseStart.current === null) phaseStart.current = performance.now();
+      const t =
+        ((performance.now() - phaseStart.current) / 1000) * Math.PI * 1.6;
+      halo.alpha = 0.1 + 0.35 * (1 - Math.cos(t));
+    }
+
+    // Color tween — repaint with interpolated color when in flight.
+    const g = pillGfxRef.current;
+    let colorActive = false;
+    if (g) {
+      const { fromColor, toColor, start } = colorTween.current;
+      if (fromColor !== toColor) {
+        const t = Math.min(1, (performance.now() - start) / COLOR_TWEEN_MS);
+        const c = lerpColor(fromColor, toColor, easeOutCubic(t));
+        repaintPill(g, c);
+        if (t >= 1) colorTween.current.fromColor = toColor;
+        else colorActive = true;
+      }
+    }
+
+    // Self-stop when nothing is animating.
+    if (!colorActive && !highlighted) {
+      job.stop();
+    }
+  });
+
   useEffect(() => {
     if (!colorTween.current.initialized) {
       colorTween.current = {
@@ -75,7 +126,6 @@ export function Pill({
       return;
     }
     if (colorTween.current.toColor === targetColor) return;
-    // The current visual color is wherever the tween is now.
     const t = Math.min(
       1,
       (performance.now() - colorTween.current.start) / COLOR_TWEEN_MS
@@ -91,57 +141,23 @@ export function Pill({
       start: performance.now(),
       initialized: true
     };
-  }, [targetColor]);
+    job.start();
+  }, [targetColor, job]);
 
-  // --- Halo for the marked problem --------------------------------------
-  const haloRef = useRef<PixiContainer>(null);
-  const phaseStart = useRef<number | null>(null);
-
-  useTick(() => {
-    // Halo pulse
-    const halo = haloRef.current;
-    if (halo) {
-      if (!highlighted) {
-        halo.alpha = 0;
-        phaseStart.current = null;
-      } else {
-        if (phaseStart.current === null) phaseStart.current = performance.now();
-        const t =
-          ((performance.now() - phaseStart.current) / 1000) * Math.PI * 1.6;
-        halo.alpha = 0.1 + 0.35 * (1 - Math.cos(t));
-      }
+  // Halo needs the job running while highlighted. Reset alpha synchronously
+  // on the trailing edge so the job can self-stop without leaving the halo lit.
+  useLayoutEffect(() => {
+    if (highlighted) {
+      job.start();
+    } else if (haloRef.current) {
+      haloRef.current.alpha = 0;
+      phaseStart.current = null;
     }
-
-    // Color tween — repaint with interpolated color when in flight.
-    const g = pillGfxRef.current;
-    if (g) {
-      const { fromColor, toColor, start } = colorTween.current;
-      if (fromColor !== toColor) {
-        const t = Math.min(1, (performance.now() - start) / COLOR_TWEEN_MS);
-        const c = lerpColor(fromColor, toColor, easeOutCubic(t));
-        repaintPill(g, c);
-        if (t >= 1) colorTween.current.fromColor = toColor;
-      }
-    }
-  });
-
-  const repaintPill = useCallback(
-    (g: PixiGraphics, color: number) => {
-      g.clear();
-      if (isUnattempted) return;
-      g.roundRect(pillX, pillY, pillW, PILL_HEIGHT, 11).fill({ color });
-    },
-    [isUnattempted, pillX, pillY, pillW]
-  );
-
-  const pillGfxRef = useRef<PixiGraphics>(null);
+  }, [highlighted, job]);
 
   const drawHalo = useCallback(
     (g: PixiGraphics) => {
       g.clear();
-      // PILL_MARGIN_X is 8; if the halo extends 8 horizontally it shares an
-      // edge with the neighbour pill and antialiasing bleeds onto it. Keep the
-      // horizontal extent ≤ MARGIN-2 so there's always a clean gap.
       g.roundRect(pillX - 5, pillY - 6, pillW + 10, PILL_HEIGHT + 12, 16).fill({
         color: COLORS.accent
       });
@@ -149,7 +165,8 @@ export function Pill({
     [pillX, pillY, pillW]
   );
 
-  // Use the latest color as the static-state paint when not animating.
+  // Static-state paint when not tweening — Pixi calls this when the draw prop
+  // identity changes (i.e. on prop changes that affect the pill shape/color).
   const drawPill = useCallback(
     (g: PixiGraphics) => {
       const { fromColor, toColor } = colorTween.current;
@@ -177,14 +194,14 @@ export function Pill({
           x={pillX + pillW / 2}
           y={ROW_HEIGHT / 2}
           anchor={0.5}
-          style={{
-            fontFamily: TEXT.family,
-            fontSize: TEXT.pillSize,
-            fontWeight: 'bold',
-            fill: 0xffffff
-          }}
+          style={LABEL_STYLE}
         />
       )}
     </pixiContainer>
   );
 }
+
+// All Pill props are primitives, so the default shallow-compare correctly
+// skips re-renders when neither the score nor the highlight state changed
+// on this column.
+export const Pill = memo(PillInner);

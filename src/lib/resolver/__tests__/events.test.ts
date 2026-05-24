@@ -1,19 +1,20 @@
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import _ from 'lodash';
 import { describe, expect, it } from 'vitest';
 
 import {
   applyEvent,
   buildInitialState,
   computeNextEvent,
+  keyBy,
+  mapValues,
+  minBy,
   parseInputData,
-  rankUsers,
-  replay
+  rankUsers
 } from '..';
 import type {
-  ImageData,
+  AwardImageMap,
   InputData,
   NextEventCtx,
   PointByProblemId,
@@ -28,13 +29,13 @@ const inputData: InputData = parseInputData(
   JSON.parse(readFileSync(DATA_PATH, 'utf-8'))
 );
 
-function buildCtx(imageData: ImageData = {}): NextEventCtx {
-  const submissionById: SubmissionById = _.keyBy(
+function buildCtx(imageData: AwardImageMap = {}): NextEventCtx {
+  const submissionById: SubmissionById = keyBy(
     inputData.submissions,
-    'submissionId'
+    (s) => s.submissionId
   );
-  const pointByProblemId: PointByProblemId = _.mapValues(
-    _.keyBy(inputData.problems, 'problemId'),
+  const pointByProblemId: PointByProblemId = mapValues(
+    keyBy(inputData.problems, (p) => p.problemId),
     (p) => p.points
   );
   return { submissionById, pointByProblemId, imageData };
@@ -86,9 +87,9 @@ describe('applyEvent', () => {
     const base = buildBase();
     const userId = Object.keys(base.users)
       .map(Number)
-      .find((id) => base.users[id].pendingSubmissionIds.length > 0)!;
-    const submissionId = base.users[userId].pendingSubmissionIds[0];
-    const problemId = ctx.submissionById[submissionId].problemId;
+      .find((id) => base.users[id]!.pendingSubmissionIds.length > 0)!;
+    const submissionId = base.users[userId]!.pendingSubmissionIds[0]!;
+    const problemId = ctx.submissionById[submissionId]!.problemId;
     const next = applyEvent(
       base,
       { kind: 'mark_problem', userId, problemId, submissionId },
@@ -98,26 +99,27 @@ describe('applyEvent', () => {
     expect(next.users).toBe(base.users); // immutable — no user scoring change
   });
 
-  it('mark_problem with no matching pending sub clears markedProblemId', () => {
+  it('mark_problem with no matching pending sub throws', () => {
     const base = buildBase();
     const userId = Object.keys(base.users)
       .map(Number)
-      .find((id) => base.users[id].pendingSubmissionIds.length > 0)!;
-    const next = applyEvent(
-      base,
-      // Bogus problemId not in this user's pending set.
-      { kind: 'mark_problem', userId, problemId: -1, submissionId: 0 },
-      ctx
-    );
-    expect(next.markedProblemId).toBe(-1);
+      .find((id) => base.users[id]!.pendingSubmissionIds.length > 0)!;
+    expect(() =>
+      applyEvent(
+        base,
+        // Bogus problemId not in this user's pending set.
+        { kind: 'mark_problem', userId, problemId: -1, submissionId: 0 },
+        ctx
+      )
+    ).toThrow(/mark_problem with no matching pending submission/);
   });
 
   it('resolve removes the submission from pending and clears markedProblemId', () => {
     const base = buildBase();
     const userId = Object.keys(base.users)
       .map(Number)
-      .find((id) => base.users[id].pendingSubmissionIds.length > 0)!;
-    const submissionId = base.users[userId].pendingSubmissionIds[0];
+      .find((id) => base.users[id]!.pendingSubmissionIds.length > 0)!;
+    const submissionId = base.users[userId]!.pendingSubmissionIds[0]!;
 
     const after = applyEvent(
       base,
@@ -125,10 +127,36 @@ describe('applyEvent', () => {
       ctx
     );
 
-    expect(after.users[userId].pendingSubmissionIds).not.toContain(
+    expect(after.users[userId]!.pendingSubmissionIds).not.toContain(
       submissionId
     );
     expect(after.markedProblemId).toBe(-1);
+  });
+
+  it('resolve with an unknown submissionId returns state unchanged', () => {
+    const base = buildBase();
+    const userId = Object.keys(base.users)
+      .map(Number)
+      .find((id) => base.users[id]!.pendingSubmissionIds.length > 0)!;
+    // Pick a submissionId that definitely isn't in the contest data.
+    const bogusId = 99_999_999;
+    const after = applyEvent(
+      base,
+      { kind: 'resolve', userId, submissionId: bogusId },
+      ctx
+    );
+    expect(after).toBe(base);
+  });
+
+  it('resolve with an unknown userId returns state unchanged', () => {
+    const base = buildBase();
+    const knownSubId = Number(Object.keys(ctx.submissionById)[0]);
+    const after = applyEvent(
+      base,
+      { kind: 'resolve', userId: -1, submissionId: knownSubId },
+      ctx
+    );
+    expect(after).toBe(base);
   });
 
   it('show_award / hide_award toggle image state', () => {
@@ -163,33 +191,6 @@ describe('applyEvent', () => {
   });
 });
 
-describe('replay', () => {
-  it('reproduces the same state from base + event log', () => {
-    const ctx = buildCtx();
-    const events = driveToCompletion(ctx).slice(0, 25);
-
-    const base = buildBase();
-    const a = replay(base, events, ctx);
-    const b = replay(base, events, ctx);
-    expect(a).toEqual(b);
-  });
-
-  it('replaying a prefix matches stepping forward then dropping the tail', () => {
-    const ctx = buildCtx();
-    const events = driveToCompletion(ctx);
-    const cut = Math.floor(events.length / 2);
-
-    const base = buildBase();
-    const fromReplay = replay(base, events.slice(0, cut), ctx);
-
-    let stepped = base;
-    for (let i = 0; i < cut; i++) {
-      stepped = applyEvent(stepped, events[i], ctx);
-    }
-    expect(fromReplay).toEqual(stepped);
-  });
-});
-
 describe('computeNextEvent', () => {
   const ctx = buildCtx();
 
@@ -199,7 +200,7 @@ describe('computeNextEvent', () => {
     const ev = computeNextEvent(base, ranking, ctx);
     expect(ev).toEqual({
       kind: 'mark_user',
-      userId: ranking[ranking.length - 1].userId,
+      userId: ranking[ranking.length - 1]!.userId,
       rowIndex: ranking.length - 1
     });
   });
@@ -213,10 +214,10 @@ describe('computeNextEvent', () => {
       const ev = computeNextEvent(state, ranking, ctx);
       if (!ev) throw new Error('no event');
       if (ev.kind === 'mark_problem') {
-        const user = state.users[state.markedUserId];
-        const expectedSubId = _.minBy(
+        const user = state.users[state.markedUserId]!;
+        const expectedSubId = minBy(
           user.pendingSubmissionIds,
-          (id) => ctx.submissionById[id].problemId
+          (id) => ctx.submissionById[id]!.problemId
         );
         expect(ev.submissionId).toBe(expectedSubId);
         return;
@@ -236,14 +237,15 @@ describe('computeNextEvent', () => {
       if (!ev) throw new Error('no event');
       if (
         ev.kind === 'mark_problem' &&
-        state.users[state.markedUserId].pendingSubmissionIds.length >= 2
+        state.users[state.markedUserId]!.pendingSubmissionIds.length >= 2
       ) {
-        const user = state.users[state.markedUserId];
+        const user = state.users[state.markedUserId]!;
         const explicit = computeNextEvent(state, ranking, ctx, 1);
         expect(explicit).toEqual({
           kind: 'mark_problem',
           userId: state.markedUserId,
-          problemId: ctx.submissionById[user.pendingSubmissionIds[1]].problemId,
+          problemId:
+            ctx.submissionById[user.pendingSubmissionIds[1]!]!.problemId,
           submissionId: user.pendingSubmissionIds[1]
         });
         return;
@@ -267,10 +269,10 @@ describe('computeNextEvent', () => {
       if (!ev) throw new Error('no event');
       if (
         ev.kind === 'mark_problem' &&
-        state.users[state.markedUserId].pendingSubmissionIds.length >= 2
+        state.users[state.markedUserId]!.pendingSubmissionIds.length >= 2
       ) {
         // The user has at least 2 pending → indices 0..1 are valid.
-        const pending = state.users[state.markedUserId].pendingSubmissionIds;
+        const pending = state.users[state.markedUserId]!.pendingSubmissionIds;
         expect(computeNextEvent(state, ranking, ctx, -1)).toBeNull();
         expect(
           computeNextEvent(state, ranking, ctx, pending.length)
@@ -293,7 +295,7 @@ describe('computeNextEvent', () => {
       frozenTime: Number.POSITIVE_INFINITY
     });
     const priv = rankUsers(fullState, []);
-    const awardRank = priv[priv.length - 1].rank; // bottom user's rank
+    const awardRank = priv[priv.length - 1]!.rank; // bottom user's rank
     const ctxWithAward = buildCtx({ [awardRank]: 'data:fake' });
 
     const events = driveToCompletion(ctxWithAward);
@@ -303,7 +305,7 @@ describe('computeNextEvent', () => {
     expect(events[showIdx + 1]?.kind).toBe('hide_award');
     // mark_user must follow once the award is dismissed (unless this was the top).
     if (showIdx + 2 < events.length) {
-      const afterHide = events[showIdx + 2];
+      const afterHide = events[showIdx + 2]!;
       expect(['mark_user', 'end']).toContain(afterHide.kind);
     }
   });
@@ -311,7 +313,7 @@ describe('computeNextEvent', () => {
   it('emits end when the top user has no pending and no award', () => {
     const ctxNoAwards = buildCtx({});
     const events = driveToCompletion(ctxNoAwards);
-    expect(events[events.length - 1].kind).toBe('end');
+    expect(events[events.length - 1]!.kind).toBe('end');
   });
 });
 
@@ -320,9 +322,10 @@ describe('full reveal via event log', () => {
     const ctx = buildCtx();
     const events = driveToCompletion(ctx);
     expect(events.length).toBeGreaterThan(0);
-    expect(events[events.length - 1].kind).toBe('end');
+    expect(events[events.length - 1]!.kind).toBe('end');
 
-    const finalState = replay(buildBase(), events, ctx);
+    let finalState = buildBase();
+    for (const event of events) finalState = applyEvent(finalState, event, ctx);
 
     // Pending should be drained for every user.
     const remaining = Object.values(finalState.users).reduce(
@@ -333,7 +336,7 @@ describe('full reveal via event log', () => {
   });
 
   it('emits show_award/hide_award when the rank has an image', () => {
-    const imageData: ImageData = { '1': 'data:fake-image' };
+    const imageData: AwardImageMap = { '1': 'data:fake-image' };
     const ctx = buildCtx(imageData);
     const events = driveToCompletion(ctx);
     const kinds = events.map((e) => e.kind);

@@ -33,8 +33,6 @@ run at 60 fps regardless of dataset size.
 | `yarn format` / `yarn format:check` | Prettier                                                |
 | `yarn deploy`                       | Build + push to gh-pages                                |
 
-Requires Node 22 (`.nvmrc`). With nvm: `nvm use`.
-
 ## Usage
 
 Open the app and either:
@@ -54,8 +52,8 @@ Configure frozen time, optionally mark unofficial contestants, hit **Run**.
 | `1`–`9` | Reveal the Nth pending submission for the current user |
 | `Space` | Play / pause autoplay                                  |
 | `C`     | Toggle autoplay controls bar                           |
-| `H`     | Toggle help overlay                                    |
-| `Esc`   | Close help                                             |
+| `F`     | Toggle FPS counter                                     |
+| `H`     | Toggle help overlay (closes it too)                    |
 
 ## Data format
 
@@ -89,16 +87,25 @@ burst.
 
 - [`src/lib/resolver/`](src/lib/resolver/) — pure simulation. `buildInitialState`
   computes a frozen-time public state plus per-user pending submissions, then
-  `applyEvent` / `computeNextEvent` / `replay` drive the reveal as an
-  event-sourced state machine. Tested with Vitest, no React.
-- [`src/resolver.ts`](src/resolver.ts) — `useResolver` hook: useReducer over
-  `{ base, events[], current }` so step is O(event diff) and rollback is
-  O(events.length) via replay.
-- [`src/canvas/`](src/canvas/) — Pixi React components: `Scoreboard`,
-  `Header`, `Row`, `Pill`. All tweens are fixed-duration easeOutCubic via
-  `useTick`, driven from refs so React reconciliation doesn't fight Pixi state.
-- [`src/App.tsx`](src/App.tsx) — splash form, autoplay loop, keyboard
-  shortcuts, confetti glue, help overlay.
+  `applyEvent` / `computeNextEvent` drive the reveal as an event-sourced state
+  machine. `simulation.ts` adds `precomputeFrom` + `makeReducer` on top: the
+  default-choice sequence is precomputed up-front, so `step` and `rollback`
+  become O(1) cursor moves on the precomputed `events[]` + `states[]` arrays.
+  Picking a non-default problem at a `mark_problem` boundary diverges and
+  re-precomputes the tail. Tested with Vitest, no React.
+- [`src/resolver.ts`](src/resolver.ts) — `useResolver` hook: thin useReducer
+  wrapper around the lib's `makeReducer` and `initSimState`.
+- [`src/canvas/`](src/canvas/) — Pixi React components: `Scoreboard`, `Header`,
+  `Row`, `Pill`. Tweens (row Y, score, penalty, glow, pill colour/halo, camera
+  pan) are all easeOutCubic and share a single `useTick` via
+  [`animation.tsx`](src/canvas/animation.tsx)'s job registry, so idle rows
+  contribute zero per-frame work. The body is virtualized — only rows whose
+  target index falls inside the camera's visible window (plus overscan) are
+  mounted, with the marked row always rendered last for stable z-order under
+  rapid back-and-forth dispatches.
+- [`src/App.tsx`](src/App.tsx) — splash form (file upload + drag-drop + share
+  link modal), autoplay loop, keyboard shortcuts, confetti glue, help overlay,
+  optional FPS HUD.
 
 ## Deploy
 

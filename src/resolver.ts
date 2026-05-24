@@ -1,66 +1,23 @@
 import { useCallback, useMemo, useReducer } from 'react';
-import _ from 'lodash';
 
 import {
-  ImageData,
+  AwardImageMap,
   InputData,
   InputSubmission,
-  InternalState,
   PointByProblemId,
-  ResolverEvent,
+  SimState,
   SubmissionById,
   UserRow,
-  applyEvent,
   buildInitialState,
-  computeNextEvent,
-  rankUsers,
-  replay
+  initSimState,
+  keyBy,
+  mapValues,
+  makeReducer,
+  rankUsers
 } from './lib/resolver';
 
 export { parseInputData } from './lib/resolver';
-export type { ImageData, InputData } from './lib/resolver';
-
-type SimState = {
-  base: InternalState;
-  events: ResolverEvent[];
-  current: InternalState;
-};
-
-type ReducerCtx = {
-  submissionById: SubmissionById;
-  pointByProblemId: PointByProblemId;
-  imageData: ImageData;
-  unofficialContestants: string[];
-};
-
-type Action =
-  | { type: 'step'; choice: number | undefined }
-  | { type: 'rollback' };
-
-function makeReducer(ctx: ReducerCtx) {
-  return (state: SimState, action: Action): SimState => {
-    if (action.type === 'step') {
-      // Rank from the latest state inside the reducer — if multiple `step`
-      // calls dispatch in the same event tick, each one sees the live ranking
-      // produced by the previous dispatch.
-      const ranking = rankUsers(state.current, ctx.unofficialContestants);
-      const next = computeNextEvent(state.current, ranking, ctx, action.choice);
-      if (!next) return state;
-      return {
-        base: state.base,
-        events: [...state.events, next],
-        current: applyEvent(state.current, next, ctx)
-      };
-    }
-    if (state.events.length === 0) return state;
-    const newEvents = state.events.slice(0, -1);
-    return {
-      base: state.base,
-      events: newEvents,
-      current: replay(state.base, newEvents, ctx)
-    };
-  };
-}
+export type { AwardImageMap, InputData } from './lib/resolver';
 
 export function useResolver({
   inputData,
@@ -69,7 +26,7 @@ export function useResolver({
   frozenTime
 }: {
   inputData: InputData;
-  imageData: ImageData;
+  imageData: AwardImageMap;
   unofficialContestants: string[];
   frozenTime: number;
 }): {
@@ -86,23 +43,27 @@ export function useResolver({
     [inputData.users]
   );
 
+  const userIdSet = useMemo(() => new Set(userIds), [userIds]);
+
+  // Set.has is O(1); userIds.includes was O(N) per submission so the original
+  // filter was O(N·M) (≈8.8K ops on vnoicup24; quadratic on bigger contests).
   const filteredSubmissions = useMemo<InputSubmission[]>(
     () =>
       inputData.submissions.filter((submission) =>
-        userIds.includes(submission.userId)
+        userIdSet.has(submission.userId)
       ),
-    [inputData.submissions, userIds]
+    [inputData.submissions, userIdSet]
   );
 
   const submissionById = useMemo<SubmissionById>(
-    () => _.keyBy(filteredSubmissions, 'submissionId'),
+    () => keyBy(filteredSubmissions, (s) => s.submissionId),
     [filteredSubmissions]
   );
 
   const pointByProblemId = useMemo<PointByProblemId>(
     () =>
-      _.mapValues(
-        _.keyBy(inputData.problems, 'problemId'),
+      mapValues(
+        keyBy(inputData.problems, (p) => p.problemId),
         (problem) => problem.points
       ),
     [inputData.problems]
@@ -124,17 +85,24 @@ export function useResolver({
     null as unknown as SimState,
     (): SimState => {
       const base = buildInitialState({ inputData, userIds, frozenTime });
-      return { base, events: [], current: base };
+      return initSimState(base, {
+        submissionById,
+        pointByProblemId,
+        imageData,
+        unofficialContestants
+      });
     }
   );
 
+  // Invariant from initSimState + makeReducer: states.length === events.length + 1
+  // and 0 ≤ cursor ≤ events.length, so states[cursor] is always defined.
+  const current = sim.states[sim.cursor]!;
+
   const data = useMemo(
-    () => rankUsers(sim.current, unofficialContestants),
-    [sim, unofficialContestants]
+    () => rankUsers(current, unofficialContestants),
+    [current, unofficialContestants]
   );
 
-  // step has stable identity now — no `data` dep. The autoplay interval and
-  // keypress handlers don't churn between dispatches.
   const step = useCallback(
     (choice?: number) => dispatch({ type: 'step', choice }),
     []
@@ -144,10 +112,10 @@ export function useResolver({
 
   return {
     data,
-    currentRowIndex: sim.current.currentRowIndex,
-    markedUserId: sim.current.markedUserId,
-    markedProblemId: sim.current.markedProblemId,
-    imageSrc: sim.current.imageSrc,
+    currentRowIndex: current.currentRowIndex,
+    markedUserId: current.markedUserId,
+    markedProblemId: current.markedProblemId,
+    imageSrc: current.imageSrc,
     step,
     rollback
   };

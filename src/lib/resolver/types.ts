@@ -24,7 +24,7 @@ export type InputData = {
   submissions: InputSubmission[];
 };
 
-export type ImageData = {
+export type AwardImageMap = {
   [rank: string]: string;
 };
 

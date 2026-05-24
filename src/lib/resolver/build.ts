@@ -1,4 +1,3 @@
-import _ from 'lodash';
 import {
   InputData,
   InputSubmission,
@@ -10,6 +9,7 @@ import {
 } from './types';
 import { getScoreClass } from './scoring';
 import { calculatePenalty } from './penalty';
+import { keyBy, mapValues, sortBy } from './util';
 
 export function processSubmissions({
   submissions,
@@ -30,65 +30,69 @@ export function processSubmissions({
     currentRowIndex: inputData.users.length - 1,
     markedUserId: -1,
     markedProblemId: -1,
-    users: _.keyBy(
+    users: keyBy(
       inputData.users.map((user) => ({
         ...user,
-        points: _.mapValues(pointByProblemId, () => 0),
-        status: _.mapValues(
+        points: mapValues(pointByProblemId, () => 0),
+        status: mapValues(
           pointByProblemId,
           () => ProblemAttemptStatus.UNATTEMPTED
         ),
-        scoreClass: _.mapValues(pointByProblemId, () => 'a'),
+        scoreClass: mapValues(pointByProblemId, () => 'a'),
         lastAlteringScoreSubmissionIdByProblemId: {},
         lastAlteringScoreSubmissionId: -1,
-        submissionIdsByProblemId: _.mapValues(
+        submissionIdsByProblemId: mapValues(
           pointByProblemId,
           () => [] as number[]
         ),
         pendingSubmissionIds: [] as number[],
         penalty: 0
       })),
-      'userId'
+      (u) => u.userId
     )
   };
 
-  const sorted = _.sortBy(submissions, 'submissionId');
+  const sorted = sortBy(submissions, (s) => s.submissionId);
 
   for (const submission of sorted) {
     const user = state.users[submission.userId];
+    if (!user) continue; // submission references a user outside this contest
     const problemId = submission.problemId;
     const submissionId = submission.submissionId;
+    // `points` / `submissionIdsByProblemId` are initialised above from
+    // pointByProblemId via mapValues, so every problemId in problemById has
+    // an entry. A submission for an unknown problemId is ignored here.
+    const userPoints = user.points[problemId];
+    if (userPoints === undefined) continue;
 
-    if (submission.points > user.points[problemId]) {
+    if (submission.points > userPoints) {
       user.points[problemId] = submission.points;
       user.lastAlteringScoreSubmissionIdByProblemId[problemId] = submissionId;
       user.lastAlteringScoreSubmissionId = submissionId;
-    } else if (submission.points === 0 && user.points[problemId] === 0) {
+    } else if (submission.points === 0 && userPoints === 0) {
       user.lastAlteringScoreSubmissionIdByProblemId[problemId] = submissionId;
     }
 
-    user.submissionIdsByProblemId[problemId].push(submissionId);
+    user.submissionIdsByProblemId[problemId]!.push(submissionId);
   }
 
   for (const userId in state.users) {
-    const user = state.users[userId];
+    const user = state.users[userId]!; // key came from Object.keys(state.users)
     for (const problemId in problemById) {
-      if (user.submissionIdsByProblemId[problemId].length === 0) {
-        continue;
-      }
+      const subIds = user.submissionIdsByProblemId[problemId];
+      if (!subIds || subIds.length === 0) continue;
 
-      if (user.points[problemId] === 0) {
+      const userPts = user.points[problemId] ?? 0;
+      const problemPts = pointByProblemId[problemId] ?? 0;
+      if (userPts === 0) {
         user.status[problemId] = ProblemAttemptStatus.INCORRECT;
-      } else if (user.points[problemId] < pointByProblemId[problemId]) {
+      } else if (userPts < problemPts) {
         user.status[problemId] = ProblemAttemptStatus.PARTIAL;
       } else {
         user.status[problemId] = ProblemAttemptStatus.ACCEPTED;
       }
 
-      user.scoreClass[problemId] = getScoreClass(
-        user.points[problemId],
-        pointByProblemId[problemId]
-      );
+      user.scoreClass[problemId] = getScoreClass(userPts, problemPts);
     }
 
     user.penalty = calculatePenalty(user, submissionById);
@@ -106,16 +110,20 @@ export function buildInitialState({
   userIds: number[];
   frozenTime: number;
 }): InternalState {
+  const userIdSet = new Set(userIds);
   const filteredSubmissions = inputData.submissions.filter((submission) =>
-    userIds.includes(submission.userId)
+    userIdSet.has(submission.userId)
   );
 
-  const problemById: ProblemById = _.keyBy(inputData.problems, 'problemId');
-  const submissionById: SubmissionById = _.keyBy(
-    filteredSubmissions,
-    'submissionId'
+  const problemById: ProblemById = keyBy(
+    inputData.problems,
+    (p) => p.problemId
   );
-  const pointByProblemId: PointByProblemId = _.mapValues(
+  const submissionById: SubmissionById = keyBy(
+    filteredSubmissions,
+    (s) => s.submissionId
+  );
+  const pointByProblemId: PointByProblemId = mapValues(
     problemById,
     (problem) => problem.points
   );
@@ -147,20 +155,23 @@ export function buildInitialState({
 
     for (const problem of inputData.problems) {
       const problemId = problem.problemId;
-      if (
-        publicUser.lastAlteringScoreSubmissionIdByProblemId[problemId] !==
-        privateUser.lastAlteringScoreSubmissionIdByProblemId[problemId]
-      ) {
-        publicUser.pendingSubmissionIds.push(
-          privateUser.lastAlteringScoreSubmissionIdByProblemId[problemId]
-        );
-        publicUser.status[problemId] |= ProblemAttemptStatus.PENDING;
+      const publicLast =
+        publicUser.lastAlteringScoreSubmissionIdByProblemId[problemId];
+      const privateLast =
+        privateUser.lastAlteringScoreSubmissionIdByProblemId[problemId];
+      if (publicLast !== privateLast && privateLast !== undefined) {
+        publicUser.pendingSubmissionIds.push(privateLast);
+        publicUser.status[problemId] =
+          (publicUser.status[problemId] ?? ProblemAttemptStatus.UNATTEMPTED) |
+          ProblemAttemptStatus.PENDING;
       }
     }
 
-    publicUser.pendingSubmissionIds = _.sortBy(
+    publicUser.pendingSubmissionIds = sortBy(
       publicUser.pendingSubmissionIds,
-      (id) => submissionById[id].problemId
+      // Pending ids were just sourced from submissionIdsByProblemId so they
+      // are guaranteed to exist in `submissionById`.
+      (id) => submissionById[id]!.problemId
     );
   }
 

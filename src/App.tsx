@@ -1,6 +1,8 @@
 import React, {
   Dispatch,
   SetStateAction,
+  Suspense,
+  lazy,
   useCallback,
   useEffect,
   useMemo,
@@ -15,8 +17,20 @@ import confetti from 'canvas-confetti';
 
 import './App.css';
 import { useKeyPress } from './hooks';
-import { InputData, ImageData, parseInputData, useResolver } from './resolver';
-import { Scoreboard } from './canvas/Scoreboard';
+import {
+  InputData,
+  AwardImageMap,
+  parseInputData,
+  useResolver
+} from './resolver';
+
+// Code-split: Pixi + @pixi/react is ~500 KB. Loading screen renders without
+// it; we only pay the chunk download when the user clicks Run. The
+// `.then(m => ({ default: m.Scoreboard }))` shim adapts the named export to
+// the default-export shape `lazy()` requires.
+const Scoreboard = lazy(() =>
+  import('./canvas/Scoreboard').then((m) => ({ default: m.Scoreboard }))
+);
 
 const CONFETTI_COLORS = ['#22d3ee', '#4ade80', '#fbbf24', '#f97316', '#a855f7'];
 
@@ -49,12 +63,27 @@ function readJsonFile<T>(file: File, parse: (raw: unknown) => T): Promise<T> {
   });
 }
 
+// Best-effort extraction of a filename from a URL, used as a display label
+// when data/image was loaded from `?data=...` / `?image=...`. Falls back to
+// the raw URL on parse failure.
+function urlBasename(url: string): string {
+  try {
+    const last = new URL(url).pathname.split('/').filter(Boolean).pop();
+    return last || url;
+  } catch {
+    return url;
+  }
+}
+
 type DropKind = 'data' | 'image';
 
 function Loading({
   inputData,
   frozenTime,
+  unofficialContestants,
   hideUnofficialContestants,
+  dataUrl,
+  imageUrl,
   setLoading,
   setInputData,
   setImageData,
@@ -64,10 +93,13 @@ function Loading({
 }: {
   inputData: InputData | null;
   frozenTime: number;
+  unofficialContestants: string[];
   hideUnofficialContestants: boolean;
+  dataUrl: string | null;
+  imageUrl: string | null;
   setLoading: Dispatch<SetStateAction<boolean>>;
   setInputData: Dispatch<SetStateAction<InputData | null>>;
-  setImageData: Dispatch<SetStateAction<ImageData>>;
+  setImageData: Dispatch<SetStateAction<AwardImageMap>>;
   setFrozenTime: Dispatch<SetStateAction<number>>;
   setUnofficialContestants: Dispatch<SetStateAction<string[]>>;
   setHideUnofficialContestants: Dispatch<SetStateAction<boolean>>;
@@ -76,6 +108,66 @@ function Loading({
   const [dragOver, setDragOver] = useState<DropKind | null>(null);
   const [dataFileName, setDataFileName] = useState<string | null>(null);
   const [imageFileName, setImageFileName] = useState<string | null>(null);
+  // True until every `?data=` / `?image=` fetch from the URL has settled
+  // (success or failure). Gates the Run button so the user can't proceed
+  // before the image arrives, which would otherwise mean awards silently
+  // render without art.
+  const [urlFetchPending, setUrlFetchPending] = useState<boolean>(
+    !!dataUrl || !!imageUrl
+  );
+
+  // Share-link modal state. Pre-fill from the URL the page was opened with
+  // (if any) so a recipient re-sharing the same contest doesn't have to
+  // re-type the hosted URLs.
+  const [showShareModal, setShowShareModal] = useState(false);
+  const [shareDataUrl, setShareDataUrl] = useState(dataUrl ?? '');
+  const [shareImageUrl, setShareImageUrl] = useState(imageUrl ?? '');
+  const [copyToast, setCopyToast] = useState<string | null>(null);
+
+  // Live-update preview URL. Includes ceremony settings even if no data URL
+  // is provided — the recipient sees a pre-filled loading screen and has to
+  // upload their own files.
+  const generatedShareUrl = useMemo(() => {
+    const params: Record<string, string> = {};
+    if (shareDataUrl) params.data = shareDataUrl;
+    if (shareImageUrl) params.image = shareImageUrl;
+    if (frozenTime !== 240) params.frozenTime = String(frozenTime);
+    if (unofficialContestants.length > 0)
+      params.unofficial = unofficialContestants.join(',');
+    if (!hideUnofficialContestants) params.hideUnofficial = '0';
+    const search = queryString.stringify(params);
+    const { origin, pathname } = window.location;
+    return search ? `${origin}${pathname}?${search}` : `${origin}${pathname}`;
+  }, [
+    shareDataUrl,
+    shareImageUrl,
+    frozenTime,
+    unofficialContestants,
+    hideUnofficialContestants
+  ]);
+
+  // Track the pending toast timer so unmount (or rapid re-clicks) doesn't
+  // leave stale timers firing setState on an unmounted component.
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    return () => {
+      if (toastTimerRef.current !== null) clearTimeout(toastTimerRef.current);
+    };
+  }, []);
+
+  const handleCopyShareLink = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(generatedShareUrl);
+      setCopyToast('Copied to clipboard');
+    } catch {
+      setCopyToast('Copy failed — select the link above to copy manually');
+    }
+    if (toastTimerRef.current !== null) clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = setTimeout(() => {
+      setCopyToast(null);
+      toastTimerRef.current = null;
+    }, 2500);
+  }, [generatedShareUrl]);
 
   const loadData = useCallback(
     async (file: File) => {
@@ -96,7 +188,7 @@ function Loading({
     async (file: File) => {
       setError(null);
       try {
-        const parsed = await readJsonFile(file, (raw) => raw as ImageData);
+        const parsed = await readJsonFile(file, (raw) => raw as AwardImageMap);
         setImageData(parsed);
         setImageFileName(file.name);
       } catch (e) {
@@ -106,6 +198,43 @@ function Loading({
     },
     [setImageData]
   );
+
+  // Auto-fetch data/image when the page is opened with `?data=...` / `?image=...`.
+  // Data and image are independent — image is documented as optional in the
+  // share-link modal, so a data-only URL must still load.
+  useEffect(() => {
+    if (!dataUrl && !imageUrl) return;
+    let cancelled = false;
+    const run = async () => {
+      if (dataUrl) {
+        try {
+          const raw = await (await fetch(dataUrl)).json();
+          if (cancelled) return;
+          setInputData(parseInputData(raw));
+          setDataFileName(urlBasename(dataUrl));
+        } catch (e) {
+          if (cancelled) return;
+          setError(`Couldn't load data URL: ${(e as Error).message}`);
+        }
+      }
+      if (imageUrl) {
+        try {
+          const raw = (await (await fetch(imageUrl)).json()) as AwardImageMap;
+          if (cancelled) return;
+          setImageData(raw);
+          setImageFileName(urlBasename(imageUrl));
+        } catch (e) {
+          if (cancelled) return;
+          setError(`Couldn't load image URL: ${(e as Error).message}`);
+        }
+      }
+      if (!cancelled) setUrlFetchPending(false);
+    };
+    run();
+    return () => {
+      cancelled = true;
+    };
+  }, [dataUrl, imageUrl, setInputData, setImageData]);
 
   const onDataChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -254,16 +383,114 @@ function Loading({
           {error}
         </div>
       )}
-      <button
-        type="button"
-        className="primary"
-        disabled={!inputData}
-        onClick={handleSubmit}
-      >
-        Run
-      </button>
+      <div className="form-actions">
+        <button
+          type="button"
+          className="secondary"
+          onClick={() => setShowShareModal(true)}
+        >
+          Generate share link
+        </button>
+        <button
+          type="button"
+          className="primary"
+          disabled={!inputData || urlFetchPending}
+          onClick={handleSubmit}
+          title={urlFetchPending ? 'Loading data/image from URL…' : undefined}
+        >
+          {urlFetchPending ? 'Loading…' : 'Run'}
+        </button>
+      </div>
+      {showShareModal && (
+        <div
+          className="share-modal-overlay"
+          onClick={() => setShowShareModal(false)}
+        >
+          <div className="share-modal" onClick={(e) => e.stopPropagation()}>
+            <h3>Generate share link</h3>
+            <p className="hint">
+              Paste public URLs for your hosted data and image files. Local file
+              uploads can&apos;t be embedded — host the JSON on a gist, S3, or
+              your own server first. The link also captures ceremony settings
+              (frozen time, unofficial contestants, hide flag).
+            </p>
+            <label className="share-field">
+              <span>Data URL</span>
+              <input
+                type="url"
+                value={shareDataUrl}
+                placeholder="https://example.com/data.json"
+                onChange={(e) => setShareDataUrl(e.target.value)}
+              />
+            </label>
+            <label className="share-field">
+              <span>
+                Image URL <em>(optional)</em>
+              </span>
+              <input
+                type="url"
+                value={shareImageUrl}
+                placeholder="https://example.com/images.json"
+                onChange={(e) => setShareImageUrl(e.target.value)}
+              />
+            </label>
+            <label className="share-field">
+              <span>Generated link</span>
+              <textarea
+                readOnly
+                rows={3}
+                value={generatedShareUrl}
+                onFocus={(e) => e.currentTarget.select()}
+              />
+            </label>
+            {copyToast && (
+              <div className="share-toast" role="status">
+                {copyToast}
+              </div>
+            )}
+            <div className="modal-actions">
+              <button
+                type="button"
+                className="secondary"
+                onClick={() => setShowShareModal(false)}
+              >
+                Close
+              </button>
+              <button
+                type="button"
+                className="primary"
+                onClick={handleCopyShareLink}
+              >
+                Copy
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </form>
   );
+}
+
+function FpsHud() {
+  const [fps, setFps] = useState(0);
+  useEffect(() => {
+    let frames = 0;
+    let last = performance.now();
+    let raf = 0;
+    const tick = (now: number) => {
+      frames++;
+      const elapsed = now - last;
+      if (elapsed >= 250) {
+        setFps(Math.round((frames * 1000) / elapsed));
+        frames = 0;
+        last = now;
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, []);
+  return <div className="fps-hud">{fps} fps</div>;
 }
 
 function Ranking({
@@ -274,7 +501,7 @@ function Ranking({
   hideUnofficialContestants
 }: {
   inputData: InputData;
-  imageData: ImageData;
+  imageData: AwardImageMap;
   frozenTime: number;
   unofficialContestants: string[];
   hideUnofficialContestants: boolean;
@@ -311,6 +538,7 @@ function Ranking({
   const [speed, setSpeed] = useState(1); // steps per second
   const [showControls, setShowControls] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
+  const [showFps, setShowFps] = useState(false);
 
   // Pause autoplay on any manual keypress so user can take over instantly.
   const pause = useCallback(() => setPlaying(false), []);
@@ -326,8 +554,8 @@ function Ranking({
     rollback();
   }, [pause, rollback]);
 
-  // All non-Escape shortcuts are gated on `!showHelp` so they don't reach
-  // through the modal. Escape stays active so it can close the modal.
+  // All shortcuts except H are gated on `!showHelp` so they don't reach
+  // through the modal. H stays active so it can also close the modal.
   const shortcutsEnabled = !showHelp;
   useKeyPress('ArrowLeft', manualRollback, shortcutsEnabled);
   useKeyPress('ArrowRight', manualStep, shortcutsEnabled);
@@ -342,22 +570,24 @@ function Ranking({
   useKeyPress('9', () => manualStep(8), shortcutsEnabled);
   useKeyPress(' ', () => setPlaying((p) => !p), shortcutsEnabled);
   useKeyPress('c', () => setShowControls((s) => !s), shortcutsEnabled);
-  useKeyPress('h', () => setShowHelp((s) => !s), shortcutsEnabled);
-  useKeyPress('Escape', () => setShowHelp(false));
+  // H toggles regardless of `shortcutsEnabled` so it can also close the modal.
+  useKeyPress('h', () => setShowHelp((s) => !s));
+  useKeyPress('f', () => setShowFps((s) => !s), shortcutsEnabled);
 
   // Auto-pause when the reveal finishes.
   useEffect(() => {
     if (currentRowIndex < 0 && playing) setPlaying(false);
   }, [currentRowIndex, playing]);
 
-  // Confetti the first time we see each award image. Rolling back past an
-  // award and re-stepping forward won't re-fire on the same image.
-  const celebrated = useRef<Set<string>>(new Set());
+  // Confetti every time imageSrc transitions to a new non-null value — fires on
+  // forward reveal AND when rolling back into an award. Tracked via prev ref
+  // (not transition source) so StrictMode's double-effect doesn't double-fire.
+  const prevImageSrc = useRef(imageSrc);
   useEffect(() => {
-    if (imageSrc !== null && !celebrated.current.has(imageSrc)) {
-      celebrated.current.add(imageSrc);
+    if (imageSrc !== null && imageSrc !== prevImageSrc.current) {
       fireAwardConfetti();
     }
+    prevImageSrc.current = imageSrc;
   }, [imageSrc]);
 
   // Keep a live ref to step so the autoplay interval below doesn't tear down
@@ -378,18 +608,21 @@ function Ranking({
 
   return (
     <>
-      <Scoreboard
-        data={data}
-        problems={inputData.problems}
-        currentRowIndex={currentRowIndex}
-        markedUserId={markedUserId}
-        markedProblemId={markedProblemId}
-      />
+      <Suspense fallback={<div className="canvas-fallback">Loading…</div>}>
+        <Scoreboard
+          data={data}
+          problems={inputData.problems}
+          currentRowIndex={currentRowIndex}
+          markedUserId={markedUserId}
+          markedProblemId={markedProblemId}
+        />
+      </Suspense>
       {imageSrc !== null && (
         <div className="award-overlay">
           <img src={imageSrc} alt="" />
         </div>
       )}
+      {showFps && <FpsHud />}
       {showHelp && (
         <div className="help-overlay" onClick={() => setShowHelp(false)}>
           <div className="help-card" onClick={(e) => e.stopPropagation()}>
@@ -416,11 +649,15 @@ function Ranking({
               </dt>
               <dd>Toggle autoplay controls</dd>
               <dt>
+                <kbd>F</kbd>
+              </dt>
+              <dd>Toggle FPS counter</dd>
+              <dt>
                 <kbd>H</kbd>
               </dt>
               <dd>Toggle this help</dd>
             </dl>
-            <p className="hint">Click anywhere or press Esc to close.</p>
+            <p className="hint">Click anywhere or press H to close.</p>
           </div>
         </div>
       )}
@@ -451,16 +688,61 @@ function Ranking({
   );
 }
 
+// Query params we read on mount only. `data` / `image` are fetched; the others
+// seed UI state so a shared link lands the recipient on a pre-filled loading
+// screen. The URL is *not* kept in sync after mount — the "Copy share link"
+// button on the loading screen builds a fresh URL from current state on demand.
+// Defaults: frozenTime=240, hideUnofficial=1 (true), unofficial=[].
+function readUrlConfig() {
+  const p = queryString.parse(window.location.search);
+  // query-string returns string for `?k=v`, string[] for `?k=v1&k=v2`, null
+  // for `?k`. `first` collapses to the first defined string value (or null),
+  // `all` flattens both shapes into a string[].
+  const first = (
+    v: string | (string | null)[] | null | undefined
+  ): string | null => {
+    if (typeof v === 'string') return v;
+    if (Array.isArray(v)) {
+      const found = v.find((x): x is string => typeof x === 'string');
+      return found ?? null;
+    }
+    return null;
+  };
+  const all = (v: string | (string | null)[] | null | undefined): string[] => {
+    if (typeof v === 'string') return v.split(',').filter(Boolean);
+    if (Array.isArray(v)) {
+      return v.flatMap((x) =>
+        typeof x === 'string' ? x.split(',').filter(Boolean) : []
+      );
+    }
+    return [];
+  };
+
+  const ftStr = first(p.frozenTime);
+  const ft = ftStr !== null ? parseInt(ftStr, 10) : NaN;
+  return {
+    frozenTime: Number.isFinite(ft) && ft >= 0 ? ft : 240,
+    unofficial: all(p.unofficial),
+    hideUnofficial: first(p.hideUnofficial) !== '0',
+    dataUrl: first(p.data),
+    imageUrl: first(p.image)
+  };
+}
+
 function App() {
+  // Read URL once for initial state — no live sync back.
+  const initial = useMemo(readUrlConfig, []);
+
   const [loading, setLoading] = useState<boolean>(true);
   const [inputData, setInputData] = useState<InputData | null>(null);
-  const [imageData, setImageData] = useState<ImageData>({});
-  const [frozenTime, setFrozenTime] = useState<number>(240);
+  const [imageData, setImageData] = useState<AwardImageMap>({});
+  const [frozenTime, setFrozenTime] = useState<number>(initial.frozenTime);
   const [unofficialContestants, setUnofficialContestants] = useState<string[]>(
-    []
+    initial.unofficial
   );
-  const [hideUnofficialContestants, setHideUnofficialContestants] =
-    useState(true);
+  const [hideUnofficialContestants, setHideUnofficialContestants] = useState(
+    initial.hideUnofficial
+  );
 
   // Bump a version every time the contest dataset identity changes. Used as a
   // remount key on <Ranking> so its useReducer re-initialises from the new
@@ -474,21 +756,8 @@ function App() {
   }
   const dataVersion = dataVersionRef.current.version;
 
-  useEffect(() => {
-    const load = async () => {
-      const params = queryString.parse(window.location.search);
-      if ('data' in params && 'image' in params) {
-        const rawData = await (await fetch(params.data as string)).json();
-        const image = (await (
-          await fetch(params.image as string)
-        ).json()) as ImageData;
-        setInputData(parseInputData(rawData));
-        setImageData(image);
-      }
-    };
-
-    load();
-  }, []);
+  // (URL-fetch lives in <Loading> so it can update the form's filename/error
+  // state alongside the data it fetches.)
 
   return (
     <div className="App">
@@ -496,7 +765,10 @@ function App() {
         <Loading
           inputData={inputData}
           frozenTime={frozenTime}
+          unofficialContestants={unofficialContestants}
           hideUnofficialContestants={hideUnofficialContestants}
+          dataUrl={initial.dataUrl}
+          imageUrl={initial.imageUrl}
           setLoading={setLoading}
           setInputData={setInputData}
           setImageData={setImageData}

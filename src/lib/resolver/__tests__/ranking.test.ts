@@ -71,13 +71,13 @@ describe('rankUsers', () => {
 
   it('returns total = sum of points', () => {
     const state = makeState([makeUser(1, 'a', { 1: 100, 2: 250, 3: 0 }, 0)]);
-    expect(rankUsers(state, [])[0].total).toBe(350);
+    expect(rankUsers(state, [])[0]!.total).toBe(350);
   });
 
   it('keeps status untouched in returned rows', () => {
     const u = makeUser(1, 'a', { 1: 100 }, 0);
     u.status = { 1: ProblemAttemptStatus.ACCEPTED };
     const rows = rankUsers(makeState([u]), []);
-    expect(rows[0].status[1]).toBe(ProblemAttemptStatus.ACCEPTED);
+    expect(rows[0]!.status[1]).toBe(ProblemAttemptStatus.ACCEPTED);
   });
 });

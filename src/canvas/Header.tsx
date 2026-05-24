@@ -1,11 +1,32 @@
-import { useCallback } from 'react';
+import { memo, useCallback } from 'react';
 import type { Graphics as PixiGraphics } from 'pixi.js';
 import type { InputProblem } from '../lib/resolver';
 import { COLORS, TEXT } from './theme';
 import { HEADER_HEIGHT, Layout, ROW_HEIGHT } from './layout';
 import { getProblemCodeFromIndex } from '../lib/resolver';
 
-export function Header({
+const HEADER_STYLE = {
+  fontFamily: TEXT.family,
+  fontSize: TEXT.headerSize,
+  fontWeight: '600' as const,
+  fill: COLORS.textMuted,
+  letterSpacing: 0.5
+};
+
+const PROBLEM_STYLE = {
+  fontFamily: TEXT.family,
+  fontSize: TEXT.size,
+  fontWeight: '700' as const,
+  fill: COLORS.text
+};
+
+const DENOM_STYLE = {
+  fontFamily: TEXT.family,
+  fontSize: TEXT.denomSize,
+  fill: COLORS.textMuted
+};
+
+function HeaderInner({
   problems,
   layout
 }: {
@@ -25,21 +46,6 @@ export function Header({
     [layout.totalWidth]
   );
 
-  const headerStyle = {
-    fontFamily: TEXT.family,
-    fontSize: TEXT.headerSize,
-    fontWeight: '600' as const,
-    fill: COLORS.textMuted,
-    letterSpacing: 0.5
-  };
-
-  const problemStyle = {
-    fontFamily: TEXT.family,
-    fontSize: TEXT.size,
-    fontWeight: '700' as const,
-    fill: COLORS.text
-  };
-
   return (
     <pixiContainer>
       <pixiGraphics draw={drawBg} />
@@ -48,51 +54,54 @@ export function Header({
         x={layout.rank.x + layout.rank.w / 2}
         y={ROW_HEIGHT / 2}
         anchor={0.5}
-        style={headerStyle}
+        style={HEADER_STYLE}
       />
       <pixiText
         text="NAME"
         x={layout.name.x + 8}
         y={ROW_HEIGHT / 2}
         anchor={{ x: 0, y: 0.5 }}
-        style={headerStyle}
+        style={HEADER_STYLE}
       />
-      {problems.map((problem, i) => (
-        <pixiContainer key={problem.problemId}>
-          <pixiText
-            text={getProblemCodeFromIndex(i)}
-            x={layout.problems[i].x + layout.problems[i].w / 2}
-            y={ROW_HEIGHT / 2 - 7}
-            anchor={0.5}
-            style={problemStyle}
-          />
-          <pixiText
-            text={String(problem.points)}
-            x={layout.problems[i].x + layout.problems[i].w / 2}
-            y={ROW_HEIGHT / 2 + 10}
-            anchor={0.5}
-            style={{
-              fontFamily: TEXT.family,
-              fontSize: TEXT.denomSize,
-              fill: COLORS.textMuted
-            }}
-          />
-        </pixiContainer>
-      ))}
+      {problems.map((problem, i) => {
+        const col = layout.problems[i]!; // i < problems.length === columns
+        return (
+          <pixiContainer key={problem.problemId}>
+            <pixiText
+              text={getProblemCodeFromIndex(i)}
+              x={col.x + col.w / 2}
+              y={ROW_HEIGHT / 2 - 7}
+              anchor={0.5}
+              style={PROBLEM_STYLE}
+            />
+            <pixiText
+              text={String(problem.points)}
+              x={col.x + col.w / 2}
+              y={ROW_HEIGHT / 2 + 10}
+              anchor={0.5}
+              style={DENOM_STYLE}
+            />
+          </pixiContainer>
+        );
+      })}
       <pixiText
         text="SCORE"
         x={layout.score.x + layout.score.w / 2}
         y={ROW_HEIGHT / 2}
         anchor={0.5}
-        style={headerStyle}
+        style={HEADER_STYLE}
       />
       <pixiText
         text="TIME"
         x={layout.time.x + layout.time.w / 2}
         y={ROW_HEIGHT / 2}
         anchor={0.5}
-        style={headerStyle}
+        style={HEADER_STYLE}
       />
     </pixiContainer>
   );
 }
+
+// Header content is determined entirely by `problems` + `layout`, both of which
+// are referentially stable until viewport resize / contest change.
+export const Header = memo(HeaderInner);

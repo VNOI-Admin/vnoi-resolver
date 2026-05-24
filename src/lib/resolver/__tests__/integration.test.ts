@@ -1,12 +1,13 @@
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import _ from 'lodash';
 import { describe, expect, it } from 'vitest';
 
 import {
   applyEvent,
   buildInitialState,
+  keyBy,
+  mapValues,
   parseInputData,
   processSubmissions,
   rankUsers
@@ -28,9 +29,12 @@ const inputData: InputData = parseInputData(
 
 function buildPrivateState(inputData: InputData): InternalState {
   const filtered = inputData.submissions;
-  const problemById: ProblemById = _.keyBy(inputData.problems, 'problemId');
-  const submissionById: SubmissionById = _.keyBy(filtered, 'submissionId');
-  const pointByProblemId: PointByProblemId = _.mapValues(
+  const problemById: ProblemById = keyBy(
+    inputData.problems,
+    (p) => p.problemId
+  );
+  const submissionById: SubmissionById = keyBy(filtered, (s) => s.submissionId);
+  const pointByProblemId: PointByProblemId = mapValues(
     problemById,
     (p) => p.points
   );
@@ -47,12 +51,15 @@ function resolveAllPending(
   initialState: InternalState,
   inputData: InputData
 ): InternalState {
-  const submissionById: SubmissionById = _.keyBy(
+  const submissionById: SubmissionById = keyBy(
     inputData.submissions,
-    'submissionId'
+    (s) => s.submissionId
   );
-  const problemById: ProblemById = _.keyBy(inputData.problems, 'problemId');
-  const pointByProblemId: PointByProblemId = _.mapValues(
+  const problemById: ProblemById = keyBy(
+    inputData.problems,
+    (p) => p.problemId
+  );
+  const pointByProblemId: PointByProblemId = mapValues(
     problemById,
     (p) => p.points
   );
@@ -60,7 +67,7 @@ function resolveAllPending(
   let state = initialState;
   for (const userId of Object.keys(state.users)) {
     const numericUserId = Number(userId);
-    const pending = [...state.users[numericUserId].pendingSubmissionIds];
+    const pending = [...state.users[numericUserId]!.pendingSubmissionIds];
     for (const submissionId of pending) {
       state = applyEvent(
         state,
@@ -77,13 +84,13 @@ describe('resolver integration on vnoicup24', () => {
     expect(inputData.users.length).toBeGreaterThan(0);
     expect(inputData.problems.length).toBeGreaterThan(0);
     expect(inputData.submissions.length).toBeGreaterThan(0);
-    expect(typeof inputData.submissions[0].time).toBe('number');
+    expect(typeof inputData.submissions[0]!.time).toBe('number');
   });
 
   it('private ranking has unique top-1 user', () => {
     const priv = buildPrivateState(inputData);
     const ranked = rankUsers(priv, []);
-    expect(ranked[0].rank).toBe('1');
+    expect(ranked[0]!.rank).toBe('1');
   });
 
   it.each([
@@ -99,8 +106,8 @@ describe('resolver integration on vnoicup24', () => {
       const privateState = buildPrivateState(inputData);
 
       for (const userId of Object.keys(privateState.users)) {
-        const resolvedUser = resolved.users[userId as unknown as number];
-        const privateUser = privateState.users[userId as unknown as number];
+        const resolvedUser = resolved.users[userId as unknown as number]!;
+        const privateUser = privateState.users[userId as unknown as number]!;
 
         expect(resolvedUser.points).toEqual(privateUser.points);
         expect(resolvedUser.penalty).toBeCloseTo(privateUser.penalty, 6);

@@ -6,10 +6,18 @@ export { processSubmissions, buildInitialState } from './build';
 export {
   applyEvent,
   computeNextEvent,
-  replay,
   type ResolverEvent,
   type ApplyCtx,
   type NextEventCtx
 } from './events';
 export { rankUsers } from './ranking';
 export { parseInputData } from './parse';
+export {
+  initSimState,
+  makeReducer,
+  precomputeFrom,
+  type SimAction,
+  type SimState,
+  type SimulationCtx
+} from './simulation';
+export { keyBy, mapValues, minBy, sortBy } from './util';

@@ -12,17 +12,21 @@ export function calculatePenalty(
   for (const [problemIdStr, last] of Object.entries(
     user.lastAlteringScoreSubmissionIdByProblemId
   )) {
-    if (submissionById[last].points === 0) {
-      continue;
-    }
+    // lastAlteringScoreSubmissionIdByProblemId is populated only with ids that
+    // came from `submissions` (see build.ts processSubmissions), so the lookup
+    // is always defined.
+    const lastSub = submissionById[last]!;
+    if (lastSub.points === 0) continue;
 
     const problemId = Number(problemIdStr);
-    incorrect += user.submissionIdsByProblemId[problemId].filter(
-      (submissionId) => submissionId < last
-    ).length;
+    // submissionIdsByProblemId has an entry for every problemId in
+    // `lastAlteringScoreSubmissionIdByProblemId` (both populated in lockstep
+    // in processSubmissions).
+    const subIds = user.submissionIdsByProblemId[problemId] ?? [];
+    incorrect += subIds.filter((subId) => subId < last).length;
   }
 
-  return (
-    submissionById[user.lastAlteringScoreSubmissionId].time + 300 * incorrect
-  );
+  const lastAltering = submissionById[user.lastAlteringScoreSubmissionId];
+  if (!lastAltering) return 0; // unreachable: id came from this submissionById
+  return lastAltering.time + 300 * incorrect;
 }
