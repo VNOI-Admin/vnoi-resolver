@@ -1,23 +1,29 @@
-import { memo, useCallback, useEffect, useLayoutEffect, useRef } from 'react';
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef
+} from 'react';
 import type {
   Container as PixiContainer,
   Graphics as PixiGraphics
 } from 'pixi.js';
 import { ProblemAttemptStatus } from '../lib/resolver';
-import { COLORS, TEXT, pillColorForClass } from './theme';
-import {
-  PILL_HEIGHT,
-  PILL_MARGIN_X,
-  PROBLEM_WIDTH,
-  ROW_HEIGHT
-} from './layout';
+import { TEXT, useTheme } from './theme';
+import { PILL_HEIGHT, PILL_Y } from './layout';
 import { useAnimationJob } from './animation';
 
 const COLOR_TWEEN_MS = 500;
+// Rounded rectangle rather than fully-rounded stadium — adjacent pills read
+// as a tight band instead of drifting capsules. Slightly larger radius than
+// before to match the taller PILL_HEIGHT.
+const PILL_RADIUS = 8;
 
-const LABEL_STYLE = {
+const SCORE_LABEL_STYLE = {
   fontFamily: TEXT.family,
-  fontSize: TEXT.pillSize,
+  fontSize: 18,
   fontWeight: 'bold' as const,
   fill: 0xffffff
 };
@@ -40,23 +46,36 @@ const easeOutCubic = (t: number) => 1 - Math.pow(1 - t, 3);
 
 function PillInner({
   x,
+  w,
   points,
   status,
   scoreClass,
-  highlighted
+  highlighted,
+  problemCode
 }: {
   x: number;
+  w: number;
   points: number;
   status: ProblemAttemptStatus;
   scoreClass: string;
   highlighted: boolean;
+  problemCode: string;
 }) {
+  const theme = useTheme();
   const isPending = !!(status & ProblemAttemptStatus.PENDING);
   const isUnattempted = status === ProblemAttemptStatus.UNATTEMPTED;
-  const targetColor = pillColorForClass(scoreClass, isPending);
-  const pillX = x + PILL_MARGIN_X;
-  const pillY = (ROW_HEIGHT - PILL_HEIGHT) / 2;
-  const pillW = PROBLEM_WIDTH - PILL_MARGIN_X * 2;
+  const targetColor = theme.pillColorForClass(scoreClass, isPending);
+
+  // Unattempted label style depends on textMuted, which is theme-dependent.
+  const unattemptedLabelStyle = useMemo(
+    () => ({
+      fontFamily: TEXT.family,
+      fontSize: 18,
+      fontWeight: '600' as const,
+      fill: theme.colors.textMuted
+    }),
+    [theme]
+  );
 
   // --- Color tween ------------------------------------------------------
   const colorTween = useRef<{
@@ -76,13 +95,22 @@ function PillInner({
   const phaseStart = useRef<number | null>(null);
   const pillGfxRef = useRef<PixiGraphics>(null);
 
+  const borderColor = theme.colors.border;
   const repaintPill = useCallback(
     (g: PixiGraphics, color: number) => {
       g.clear();
-      if (isUnattempted) return;
-      g.roundRect(pillX, pillY, pillW, PILL_HEIGHT, 11).fill({ color });
+      if (isUnattempted) {
+        // Subtle outlined ghost — the muted problem letter does the visual work.
+        g.roundRect(x, PILL_Y, w, PILL_HEIGHT, PILL_RADIUS).stroke({
+          width: 1,
+          color: borderColor,
+          alpha: 0.5
+        });
+        return;
+      }
+      g.roundRect(x, PILL_Y, w, PILL_HEIGHT, PILL_RADIUS).fill({ color });
     },
-    [isUnattempted, pillX, pillY, pillW]
+    [isUnattempted, x, w, borderColor]
   );
 
   const job = useAnimationJob(() => {
@@ -155,14 +183,19 @@ function PillInner({
     }
   }, [highlighted, job]);
 
+  const accentColor = theme.colors.accent;
   const drawHalo = useCallback(
     (g: PixiGraphics) => {
       g.clear();
-      g.roundRect(pillX - 5, pillY - 6, pillW + 10, PILL_HEIGHT + 12, 16).fill({
-        color: COLORS.accent
-      });
+      g.roundRect(
+        x - 7,
+        PILL_Y - 7,
+        w + 14,
+        PILL_HEIGHT + 14,
+        PILL_RADIUS + 6
+      ).fill({ color: accentColor });
     },
-    [pillX, pillY, pillW]
+    [x, w, accentColor]
   );
 
   // Static-state paint when not tweening — Pixi calls this when the draw prop
@@ -176,10 +209,14 @@ function PillInner({
     [repaintPill, targetColor]
   );
 
-  const label = isPending
-    ? `${points || ''}?`
-    : isUnattempted
-      ? ''
+  // Label rules:
+  //   - unattempted        → problem code (muted, 50% alpha)
+  //   - pending (resolved-yet-unrevealed) → `{points}?`
+  //   - else               → score number
+  const label = isUnattempted
+    ? problemCode
+    : isPending
+      ? `${points || ''}?`
       : String(points);
 
   return (
@@ -188,20 +225,18 @@ function PillInner({
         <pixiGraphics draw={drawHalo} />
       </pixiContainer>
       <pixiGraphics ref={pillGfxRef} draw={drawPill} />
-      {label && (
-        <pixiText
-          text={label}
-          x={pillX + pillW / 2}
-          y={ROW_HEIGHT / 2}
-          anchor={0.5}
-          style={LABEL_STYLE}
-        />
-      )}
+      <pixiText
+        text={label}
+        x={x + w / 2}
+        y={PILL_Y + PILL_HEIGHT / 2}
+        anchor={0.5}
+        alpha={isUnattempted ? 0.5 : 1}
+        style={isUnattempted ? unattemptedLabelStyle : SCORE_LABEL_STYLE}
+      />
     </pixiContainer>
   );
 }
 
 // All Pill props are primitives, so the default shallow-compare correctly
-// skips re-renders when neither the score nor the highlight state changed
-// on this column.
+// skips re-renders when nothing changed on this column.
 export const Pill = memo(PillInner);

@@ -6,17 +6,17 @@ import {
   useRef,
   useState
 } from 'react';
-import { Application, extend } from '@pixi/react';
+import { Application, extend, useApplication } from '@pixi/react';
 import { Container, Graphics, Text } from 'pixi.js';
 import type {
   Container as PixiContainer,
   Graphics as PixiGraphics
 } from 'pixi.js';
 import type { InputProblem, UserRow } from '../lib/resolver';
-import { HEADER_HEIGHT, ROW_HEIGHT, computeLayout } from './layout';
+import { HEADER_HEIGHT, CARD_HEIGHT, computeLayout } from './layout';
 import { Header } from './Header';
 import { Row } from './Row';
-import { COLORS } from './theme';
+import { useTheme } from './theme';
 import { AnimationRoot, useAnimationJob } from './animation';
 
 // Register Pixi classes for JSX use (<pixiContainer>, <pixiGraphics>, <pixiText>).
@@ -29,6 +29,19 @@ const easeOutCubic = (t: number) => 1 - Math.pow(1 - t, 3);
 // visible window, padded by OVERSCAN rows above/below to absorb in-flight row
 // tweens (a row sliding into view from outside should already be mounted).
 const OVERSCAN = 20;
+
+// @pixi/react sets `backgroundColor` on Application mount and doesn't always
+// flow prop changes through to the renderer. This component pushes the value
+// imperatively each time the active theme changes so the canvas clear colour
+// stays in sync with the theme. Renders nothing.
+function ThemeBgSync({ bg }: { bg: number }) {
+  const { app } = useApplication();
+  useEffect(() => {
+    if (!app) return;
+    app.renderer.background.color = bg;
+  }, [app, bg]);
+  return null;
+}
 
 function useViewportSize() {
   const [size, setSize] = useState(() => ({
@@ -57,6 +70,7 @@ export function Scoreboard({
   markedUserId: number;
   markedProblemId: number;
 }) {
+  const theme = useTheme();
   const viewport = useViewportSize();
   const layout = useMemo(
     () => computeLayout(viewport.width, problems.length),
@@ -64,12 +78,12 @@ export function Scoreboard({
   );
 
   const bodyHeight = Math.max(0, viewport.height - HEADER_HEIGHT);
-  const contentHeight = data.length * ROW_HEIGHT;
+  const contentHeight = data.length * CARD_HEIGHT;
 
   // Target camera Y: align cursor's row bottom to viewport bottom.
   const cameraTargetY = useMemo(() => {
     if (currentRowIndex < 0) return 0;
-    const bottom = (currentRowIndex + 1) * ROW_HEIGHT;
+    const bottom = (currentRowIndex + 1) * CARD_HEIGHT;
     const max = Math.max(0, contentHeight - bodyHeight);
     return Math.min(Math.max(0, bottom - bodyHeight), max);
   }, [currentRowIndex, contentHeight, bodyHeight]);
@@ -79,12 +93,13 @@ export function Scoreboard({
       width={viewport.width}
       height={viewport.height}
       resizeTo={window}
-      backgroundColor={COLORS.bg}
+      backgroundColor={theme.colors.bg}
       antialias
       resolution={window.devicePixelRatio || 1}
       autoDensity
     >
       <AnimationRoot>
+        <ThemeBgSync bg={theme.colors.bg} />
         <Body
           cameraTargetY={cameraTargetY}
           bodyHeight={bodyHeight}
@@ -134,7 +149,7 @@ function Body({
   // Track the latest scroll max so the tick can clamp cameraY against it.
   // (When the viewport shrinks mid-tween, the old target may now be past the
   // content end.)
-  const maxCameraY = Math.max(0, data.length * ROW_HEIGHT - bodyHeight);
+  const maxCameraY = Math.max(0, data.length * CARD_HEIGHT - bodyHeight);
   const maxCameraYRef = useRef(maxCameraY);
   maxCameraYRef.current = maxCameraY;
 
@@ -266,11 +281,11 @@ function Body({
     bodyHeight;
   const firstVisibleIndex = Math.max(
     0,
-    Math.floor(minTargetY / ROW_HEIGHT) - OVERSCAN
+    Math.floor(minTargetY / CARD_HEIGHT) - OVERSCAN
   );
   const lastVisibleIndex = Math.min(
     data.length - 1,
-    Math.ceil(maxTargetY / ROW_HEIGHT) + OVERSCAN
+    Math.ceil(maxTargetY / CARD_HEIGHT) + OVERSCAN
   );
   const visibleData =
     data.length === 0

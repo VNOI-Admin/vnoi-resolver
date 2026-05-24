@@ -1,17 +1,42 @@
-export const ROW_HEIGHT = 50;
-export const HEADER_HEIGHT = 50;
-export const RANK_WIDTH = 80;
-export const PROBLEM_WIDTH = 90;
-export const SCORE_WIDTH = 100;
-export const TIME_WIDTH = 110;
-export const NAME_MIN_WIDTH = 240;
-export const PILL_HEIGHT = 30;
-export const PILL_MARGIN_X = 8;
+// 2-row card layout (ICPC-style), sized for ceremony projection. Every
+// metric here is biased toward "readable from 6-8 m away on a 4-5 m throw"
+// rather than "compact for local browsing". Trades visible rows (~12 → ~8)
+// for legibility.
+//
+//   ┌────────────────────────────────────────────────────────────────────┐
+//   │ RANK  NAME ............................          SCORE     TIME    │  ← TOP_ROW_HEIGHT
+//   │       [pill][pill][pill][pill][pill][pill][pill][pill]              │  ← PILL_ROW_HEIGHT
+//   └────────────────────────────────────────────────────────────────────┘
+
+export const TOP_ROW_HEIGHT = 48;
+export const PILL_ROW_HEIGHT = 48;
+export const CARD_HEIGHT = TOP_ROW_HEIGHT + PILL_ROW_HEIGHT;
+
+// Header is shorter than a card — just label + point-value subscript,
+// no pills to align with.
+export const HEADER_HEIGHT = 70;
+
+// Backwards-compat alias for the few call sites (Scoreboard camera math /
+// virtualization) that talk in "row" terms.
+export const ROW_HEIGHT = CARD_HEIGHT;
+
+export const RANK_WIDTH = 100;
+export const SCORE_WIDTH = 130;
+export const TIME_WIDTH = 120;
+export const NAME_MIN_WIDTH = 400;
+
+export const PILL_HEIGHT = 38;
+export const PILL_GAP = 2;
+export const PILL_AREA_PADDING_X = 8;
+export const PILL_MIN_WIDTH = 70;
+
+// Pill Y inside the card — centered in the bottom row.
+export const PILL_Y = TOP_ROW_HEIGHT + (PILL_ROW_HEIGHT - PILL_HEIGHT) / 2;
 
 export type Layout = {
   rank: { x: number; w: number };
   name: { x: number; w: number };
-  problems: { x: number; w: number }[]; // per-problem column
+  problems: { x: number; w: number }[]; // x is the pill's left edge, w its width
   score: { x: number; w: number };
   time: { x: number; w: number };
   totalWidth: number;
@@ -21,20 +46,31 @@ export function computeLayout(
   viewportWidth: number,
   problemCount: number
 ): Layout {
-  const fixed =
-    RANK_WIDTH + problemCount * PROBLEM_WIDTH + SCORE_WIDTH + TIME_WIDTH;
-  const nameWidth = Math.max(NAME_MIN_WIDTH, viewportWidth - fixed);
+  const nameWidth = Math.max(
+    NAME_MIN_WIDTH,
+    viewportWidth - RANK_WIDTH - SCORE_WIDTH - TIME_WIDTH
+  );
 
   let x = 0;
   const rank = { x, w: RANK_WIDTH };
   x += RANK_WIDTH;
   const name = { x, w: nameWidth };
+
+  // Pills tile horizontally across the name column. Width is fluid; floored
+  // so very-many-problem contests overflow rather than shrink into illegibility.
+  const pillAreaX = name.x + PILL_AREA_PADDING_X;
+  const pillAreaW = nameWidth - PILL_AREA_PADDING_X * 2;
+  const fluidPillW =
+    problemCount > 0
+      ? (pillAreaW - PILL_GAP * (problemCount - 1)) / problemCount
+      : 0;
+  const pillW = Math.max(PILL_MIN_WIDTH, fluidPillW);
+  const problems = Array.from({ length: problemCount }, (_, i) => ({
+    x: pillAreaX + i * (pillW + PILL_GAP),
+    w: pillW
+  }));
+
   x += nameWidth;
-  const problems = Array.from({ length: problemCount }, () => {
-    const col = { x, w: PROBLEM_WIDTH };
-    x += PROBLEM_WIDTH;
-    return col;
-  });
   const score = { x, w: SCORE_WIDTH };
   x += SCORE_WIDTH;
   const time = { x, w: TIME_WIDTH };

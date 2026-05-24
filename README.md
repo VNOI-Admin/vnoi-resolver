@@ -53,7 +53,20 @@ Configure frozen time, optionally mark unofficial contestants, hit **Run**.
 | `Space` | Play / pause autoplay                                  |
 | `C`     | Toggle autoplay controls bar                           |
 | `F`     | Toggle FPS counter                                     |
+| `T`     | Cycle colour theme (Newsprint → Terminal → Studio)     |
 | `H`     | Toggle help overlay (closes it too)                    |
+
+### Themes
+
+Three ceremony themes, switchable any time via `T`. Choice persists in `localStorage`.
+
+| Theme         | Surface     | Accent          | Vibe                                        |
+| ------------- | ----------- | --------------- | ------------------------------------------- |
+| **Newsprint** | paper white | ink cobalt blue | printed sports page, bright pills (default) |
+| **Terminal**  | dark navy   | cyan            | CRT phosphor, polished dev-tool feel        |
+| **Studio**    | pure black  | bright orange   | primetime broadcast, dark studio set        |
+
+Each theme has its own score-gradient ramp + marked-row tint (highlighter yellow on Newsprint, accent overlay on the dark themes). All HTML chrome (loading form, share modal, help overlay, autoplay controls, FPS HUD) re-tints from a single set of CSS variables driven by the active theme.
 
 ## Data format
 
@@ -106,6 +119,14 @@ burst.
 - [`src/App.tsx`](src/App.tsx) — splash form (file upload + drag-drop + share
   link modal), autoplay loop, keyboard shortcuts, confetti glue, help overlay,
   optional FPS HUD.
+- [`src/canvas/theme.ts`](src/canvas/theme.ts) — theme registry +
+  `ThemeProvider` / `useTheme` hook. Every Pixi component reads colours from
+  `useTheme()`; CSS chrome reads from `:root` vars (`--ui-surface`,
+  `--ui-text`, `--ui-accent`, …) that App.tsx keeps in sync with the active
+  theme. Adding a new theme is a one-place change: extend `THEMES` with all
+  required colour keys + a `markedRow` overlay; the theme smoke test
+  ([`src/canvas/__tests__/theme.test.ts`](src/canvas/__tests__/theme.test.ts))
+  catches missing fields at CI time.
 
 ## Deploy
 

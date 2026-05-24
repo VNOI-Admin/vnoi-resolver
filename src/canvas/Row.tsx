@@ -1,13 +1,20 @@
-import { memo, useCallback, useEffect, useLayoutEffect, useRef } from 'react';
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef
+} from 'react';
 import type {
   Container as PixiContainer,
   Graphics as PixiGraphics,
   Text as PixiText
 } from 'pixi.js';
 import type { InputProblem, UserRow } from '../lib/resolver';
-import { ProblemAttemptStatus } from '../lib/resolver';
-import { COLORS, TEXT } from './theme';
-import { Layout, ROW_HEIGHT, formatPenalty } from './layout';
+import { ProblemAttemptStatus, getProblemCodeFromIndex } from '../lib/resolver';
+import { TEXT, useTheme } from './theme';
+import { CARD_HEIGHT, Layout, TOP_ROW_HEIGHT, formatPenalty } from './layout';
 import { Pill } from './Pill';
 import { useAnimationJob } from './animation';
 
@@ -15,32 +22,16 @@ const TWEEN_MS = 1000;
 const SCORE_TWEEN_MS = 700;
 const easeOutCubic = (t: number) => 1 - Math.pow(1 - t, 3);
 
-// Pixi's `style` prop is mutation-sensitive: a new object literal each render
-// makes @pixi/react re-apply it and Pixi re-validate the text texture. These
-// are invariant per row so we hoist them.
-const RANK_STYLE = {
-  fontFamily: TEXT.family,
-  fontSize: TEXT.rankSize,
-  fontWeight: 'bold' as const,
-  fill: COLORS.textRank
-};
-const NAME_STYLE = {
-  fontFamily: TEXT.family,
-  fontSize: TEXT.size,
-  fill: COLORS.text,
-  wordWrap: false
-};
-const SCORE_STYLE = {
-  fontFamily: TEXT.family,
-  fontSize: TEXT.size,
-  fontWeight: 'bold' as const,
-  fill: COLORS.text
-};
-const TIME_STYLE = {
-  fontFamily: TEXT.family,
-  fontSize: TEXT.size,
-  fill: COLORS.text
-};
+// Name sits in the upper 40 px (pills tile underneath it). Rank / score / time
+// columns have nothing under them, so vertically-center those against the FULL
+// card so they don't look top-stuck with whitespace below.
+const NAME_Y = TOP_ROW_HEIGHT / 2;
+const SIDE_COL_Y = CARD_HEIGHT / 2;
+
+// Sizes are biased for projector legibility from across a contest hall, not
+// for compact local viewing. Color fills depend on the active theme, so the
+// full style objects are built inside the component via useMemo.
+const USERNAME_GAP = 10;
 
 type RowProps = {
   row: UserRow;
@@ -59,8 +50,75 @@ function RowInner({
   isCurrent,
   markedProblemId
 }: RowProps) {
+  const theme = useTheme();
+  // Style objects bake the theme's text colors in. Pixi re-validates the text
+  // texture when the style identity changes — useMemo keeps that to one
+  // re-validation per theme change instead of one per render.
+  // Rank shares the same text color as the score (theme.colors.text). Using
+  // the accent color for rank pulled attention away from the actual numbers
+  // the audience tracks (name, score, time) — keeping rank/score/time in one
+  // color family lets the eye scan a row without distraction.
+  const rankStyle = useMemo(
+    () => ({
+      fontFamily: TEXT.family,
+      fontSize: 30,
+      fontWeight: 'bold' as const,
+      fill: theme.colors.text
+    }),
+    [theme]
+  );
+  const nameStyle = useMemo(
+    () => ({
+      fontFamily: TEXT.family,
+      fontSize: 26,
+      fontWeight: '700' as const,
+      fill: theme.colors.text,
+      wordWrap: false
+    }),
+    [theme]
+  );
+  const usernameStyle = useMemo(
+    () => ({
+      fontFamily: TEXT.family,
+      fontSize: 20,
+      fontWeight: '400' as const,
+      fill: theme.colors.textMuted,
+      wordWrap: false
+    }),
+    [theme]
+  );
+  const scoreStyle = useMemo(
+    () => ({
+      fontFamily: TEXT.family,
+      fontSize: 32,
+      fontWeight: 'bold' as const,
+      fill: theme.colors.text
+    }),
+    [theme]
+  );
+  const timeStyle = useMemo(
+    () => ({
+      fontFamily: TEXT.family,
+      fontSize: 18,
+      fill: theme.colors.textMuted
+    }),
+    [theme]
+  );
+
   const ref = useRef<PixiContainer>(null);
-  const targetY = targetIndex * ROW_HEIGHT;
+  const nameTextRef = useRef<PixiText>(null);
+  const usernameTextRef = useRef<PixiText>(null);
+  const targetY = targetIndex * CARD_HEIGHT;
+
+  // Position username right after the full name, with a small gap. Width of
+  // the name text isn't known until after Pixi lays it out, so we read it
+  // synchronously in a layout effect and reposition before paint.
+  useLayoutEffect(() => {
+    const nameEl = nameTextRef.current;
+    const userEl = usernameTextRef.current;
+    if (!nameEl || !userEl) return;
+    userEl.x = layout.name.x + 8 + nameEl.width + USERNAME_GAP;
+  }, [row.fullName, layout.name.x]);
 
   // Tween row Y when its target index changes.
   const tween = useRef<{
@@ -92,10 +150,6 @@ function RowInner({
   // Track the most recent rounded penalty so the per-frame tween skips
   // formatPenalty + texture regen when the visible seconds haven't ticked.
   const lastRenderedPenalty = useRef<number>(Math.floor(row.penalty));
-
-  // Glow overlay on the current row.
-  const glowRef = useRef<PixiContainer>(null);
-  const glowPhaseStart = useRef<number | null>(null);
 
   const job = useAnimationJob(() => {
     // Row Y reorder.
@@ -148,18 +202,9 @@ function RowInner({
       }
     }
 
-    // Glow pulse on the current row.
-    const glow = glowRef.current;
-    if (glow && isCurrent) {
-      if (glowPhaseStart.current === null)
-        glowPhaseStart.current = performance.now();
-      const t =
-        ((performance.now() - glowPhaseStart.current) / 1000) * Math.PI * 1.2;
-      glow.alpha = 0.04 + 0.06 * (1 - Math.cos(t));
-    }
-
-    // Self-stop once nothing remains to animate.
-    if (!hasYTween && !hasScoreTween && !hasPenaltyTween && !isCurrent) {
+    // Self-stop once nothing remains to animate. Marked-row indication is now
+    // purely the static cyan bg tint in drawBg — no per-frame pulse needed.
+    if (!hasYTween && !hasScoreTween && !hasPenaltyTween) {
       job.stop();
     }
   });
@@ -244,96 +289,140 @@ function RowInner({
     job.start();
   }, [row.penalty, job]);
 
-  // Glow needs the job running while isCurrent. Reset alpha synchronously
-  // when stepping off the current row — by the time the job stops itself, the
-  // last alpha could be anything non-zero.
-  useLayoutEffect(() => {
-    if (isCurrent) {
-      job.start();
-    } else if (glowRef.current) {
-      glowRef.current.alpha = 0;
-      glowPhaseStart.current = null;
-    }
-  }, [isCurrent, job]);
-
+  // Card background: alternating stripe; marked rows get an accent tint
+  // overlay (ICPC-style full-row highlight). The 4px left accent bar of the
+  // previous layout is dropped — redundant with the full tint.
+  //
+  // Divider stays neutral (theme.colors.border) — using the accent here made
+  // the dividers compete with the header underline. Theme identity lives in
+  // the header underline + marked-row tint + pill halo, not in the dividers.
+  const bgColor = theme.colors.bg;
+  const bgStripeColor = theme.colors.bgStripe;
+  const borderColor = theme.colors.border;
+  const markedRowColor = theme.markedRow.color;
+  const markedRowAlpha = theme.markedRow.alpha;
   const drawBg = useCallback(
     (g: PixiGraphics) => {
       g.clear();
-      const color = isCurrent
-        ? COLORS.bgCurrent
-        : targetIndex % 2 === 1
-          ? COLORS.bgStripe
-          : COLORS.bg;
-      g.rect(0, 0, layout.totalWidth, ROW_HEIGHT).fill(color);
-      g.rect(0, ROW_HEIGHT - 1, layout.totalWidth, 1).fill({
-        color: COLORS.border,
-        alpha: 0.6
-      });
+      const base = targetIndex % 2 === 1 ? bgStripeColor : bgColor;
+      g.rect(0, 0, layout.totalWidth, CARD_HEIGHT).fill(base);
       if (isCurrent) {
-        g.rect(0, 0, 4, ROW_HEIGHT).fill(COLORS.accent);
+        // Per-theme marked-row tint. Themes pick a colour + alpha that
+        // BRIGHTENS the row against their bg (cyan glow on dark, highlighter
+        // yellow on white) — using one accent for both directions would
+        // darken light themes.
+        g.rect(0, 0, layout.totalWidth, CARD_HEIGHT).fill({
+          color: markedRowColor,
+          alpha: markedRowAlpha
+        });
       }
+      // Neutral divider between cards — full alpha so the row separation is
+      // unambiguous from across the hall, but still in `border` colour so it
+      // doesn't compete with the theme accent.
+      g.rect(0, CARD_HEIGHT - 1, layout.totalWidth, 1).fill(borderColor);
     },
-    [isCurrent, targetIndex, layout.totalWidth]
-  );
-
-  const drawGlow = useCallback(
-    (g: PixiGraphics) => {
-      g.clear();
-      g.rect(0, 0, layout.totalWidth, ROW_HEIGHT).fill(COLORS.accent);
-    },
-    [layout.totalWidth]
+    [
+      isCurrent,
+      targetIndex,
+      layout.totalWidth,
+      bgColor,
+      bgStripeColor,
+      borderColor,
+      markedRowColor,
+      markedRowAlpha
+    ]
   );
 
   return (
     <pixiContainer ref={ref}>
       <pixiGraphics draw={drawBg} />
-      <pixiContainer ref={glowRef} alpha={0}>
-        <pixiGraphics draw={drawGlow} />
-      </pixiContainer>
       <pixiText
         text={row.rank}
         x={layout.rank.x + layout.rank.w / 2}
-        y={ROW_HEIGHT / 2}
+        y={SIDE_COL_Y}
         anchor={0.5}
-        style={RANK_STYLE}
+        style={rankStyle}
       />
       <pixiText
-        text={`${row.fullName} (${row.username})`}
+        ref={nameTextRef}
+        text={row.fullName}
         x={layout.name.x + 8}
-        y={ROW_HEIGHT / 2}
+        y={NAME_Y}
         anchor={{ x: 0, y: 0.5 }}
-        style={NAME_STYLE}
+        style={nameStyle}
       />
+      <pixiText
+        ref={usernameTextRef}
+        text={`(${row.username})`}
+        x={layout.name.x + 8}
+        y={NAME_Y}
+        anchor={{ x: 0, y: 0.5 }}
+        style={usernameStyle}
+      />
+      {/*
+       * The marked pill's halo extends ~5px past the pill bounds. If we
+       * rendered pills in column order, the neighbour to the right would
+       * paint over that overflow and clip it. So: render every non-marked
+       * pill first, then the marked one last (z-on-top). Same belt-and-
+       * suspenders pattern as Body's marked-row-last render order.
+       */}
       {problems.map((problem, i) => {
-        const col = layout.problems[i]!; // i < problems.length === columns
+        const isMarked = isCurrent && problem.problemId === markedProblemId;
+        if (isMarked) return null;
+        const col = layout.problems[i]!;
         return (
           <Pill
             key={problem.problemId}
             x={col.x}
+            w={col.w}
+            problemCode={getProblemCodeFromIndex(i)}
             points={row.points[problem.problemId] ?? 0}
             status={
               row.status[problem.problemId] ?? ProblemAttemptStatus.UNATTEMPTED
             }
             scoreClass={row.scoreClass[problem.problemId] ?? ''}
-            highlighted={isCurrent && problem.problemId === markedProblemId}
+            highlighted={false}
           />
         );
       })}
+      {isCurrent &&
+        markedProblemId !== -1 &&
+        (() => {
+          const i = problems.findIndex((p) => p.problemId === markedProblemId);
+          if (i < 0) return null;
+          const problem = problems[i]!;
+          const col = layout.problems[i]!;
+          return (
+            <Pill
+              key={problem.problemId}
+              x={col.x}
+              w={col.w}
+              problemCode={getProblemCodeFromIndex(i)}
+              points={row.points[problem.problemId] ?? 0}
+              status={
+                row.status[problem.problemId] ??
+                ProblemAttemptStatus.UNATTEMPTED
+              }
+              scoreClass={row.scoreClass[problem.problemId] ?? ''}
+              highlighted
+            />
+          );
+        })()}
       <pixiText
         ref={scoreTextRef}
         text={String(row.total)}
         x={layout.score.x + layout.score.w / 2}
-        y={ROW_HEIGHT / 2}
+        y={SIDE_COL_Y}
         anchor={0.5}
-        style={SCORE_STYLE}
+        style={scoreStyle}
       />
       <pixiText
         ref={penaltyTextRef}
         text={formatPenalty(row.penalty)}
         x={layout.time.x + layout.time.w / 2}
-        y={ROW_HEIGHT / 2}
+        y={SIDE_COL_Y}
         anchor={0.5}
-        style={TIME_STYLE}
+        style={timeStyle}
       />
     </pixiContainer>
   );
