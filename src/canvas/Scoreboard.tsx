@@ -32,6 +32,14 @@ const CAMERA_TWEEN_MS_BASE = 800;
 // mounted when they slide in from outside the viewport.
 const OVERSCAN = 20;
 
+// How many rows the camera leaves visible below the current cursor. Putting
+// the cursor at the very bottom worked but the audience couldn't see the
+// next contenders, and a row glued to the bottom edge is harder to read
+// than one a couple of rows up. Lookahead also implicitly centres the
+// cursor a bit more — when the camera maxes out near the end of the
+// reveal, the clamp keeps the cursor in frame at the top of the band.
+const CURSOR_LOOKAHEAD_ROWS = 2;
+
 // @pixi/react sets backgroundColor on mount but doesn't always flow prop
 // changes through. Push the value imperatively on theme change.
 function ThemeBgSync({ bg }: { bg: number }) {
@@ -92,10 +100,13 @@ export function Scoreboard({
   const bodyHeight = Math.max(0, viewport.height - HEADER_HEIGHT);
   const contentHeight = data.length * CARD_HEIGHT;
 
-  // Target camera Y: align cursor row's bottom to the viewport bottom.
+  // Target camera Y: align (cursor row's bottom + CURSOR_LOOKAHEAD_ROWS) to
+  // the viewport bottom. Clamp to [0, max] for the edges — near the top of
+  // the scoreboard the cursor naturally sits below the header; near the
+  // bottom the lookahead is implicitly cut by the max-scroll clamp.
   const cameraTargetY = useMemo(() => {
     if (currentRowIndex < 0) return 0;
-    const bottom = (currentRowIndex + 1) * CARD_HEIGHT;
+    const bottom = (currentRowIndex + 1 + CURSOR_LOOKAHEAD_ROWS) * CARD_HEIGHT;
     const max = Math.max(0, contentHeight - bodyHeight);
     return Math.min(Math.max(0, bottom - bodyHeight), max);
   }, [currentRowIndex, contentHeight, bodyHeight]);

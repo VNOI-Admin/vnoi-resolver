@@ -83,6 +83,7 @@ export function OperatorConsole({
     cursor,
     totalEvents,
     events,
+    eventHoldMs,
     peekAt,
     pendingSubmissionsAt,
     projectRankAfter,
@@ -196,11 +197,35 @@ export function OperatorConsole({
   useEffect(() => {
     stepRef.current = step;
   }, [step]);
+  // Absolute-time autoplay scheduler. Per-event hold times (SOLVED_MOVE
+  // long, FAILED short, etc.) are read from eventHoldMs[cursor-1] — the
+  // hold AFTER the event whose result is currently on screen. The
+  // nextWakeMsRef accumulates the target absolute time so per-iteration
+  // jitter (React commit overhead, browser timer slop) doesn't compound
+  // across a long reveal — each sleep is `target - now`, not a fresh
+  // `delay` chained on top of the previous late firing.
+  //
+  // Reset to null on pause / showHelp / not-playing; the effect re-anchors
+  // to performance.now() on resume.
+  const nextWakeMsRef = useRef<number | null>(null);
   useEffect(() => {
-    if (!playing || showHelp) return;
-    const id = setInterval(() => stepRef.current(), 1000 / speed);
-    return () => clearInterval(id);
-  }, [playing, showHelp, speed]);
+    if (!playing || showHelp) {
+      nextWakeMsRef.current = null;
+      return;
+    }
+    if (nextWakeMsRef.current === null) {
+      nextWakeMsRef.current = performance.now();
+    }
+    // First fire after resume: no prior event to hold for. Otherwise hold
+    // for the duration classified for events[cursor - 1] — the event whose
+    // aftermath the audience is currently looking at.
+    const prevIdx = cursor - 1;
+    const baseHoldMs = prevIdx >= 0 ? (eventHoldMs[prevIdx] ?? 1000) : 0;
+    nextWakeMsRef.current += baseHoldMs / speed;
+    const sleepMs = Math.max(0, nextWakeMsRef.current - performance.now());
+    const id = setTimeout(() => stepRef.current(), sleepMs);
+    return () => clearTimeout(id);
+  }, [playing, showHelp, speed, cursor, eventHoldMs]);
 
   // Captured during render so the first cursor=1 paint already has a
   // valid timestamp — a post-commit effect lags one frame.

@@ -59,6 +59,11 @@ export function useResolver({
   cursor: number;
   totalEvents: number;
   events: readonly ResolverEvent[];
+  // Per-event autoplay hold times in ms (indexed in lockstep with events[]).
+  // eventHoldMs[i] is the duration to wait AFTER firing events[i] before
+  // firing events[i+1] — classified by drama (SOLVED_MOVE longest,
+  // FAILED shortest). Consumed by OperatorConsole's autoplay loop.
+  eventHoldMs: readonly number[];
   // Read-only state preview at an arbitrary cursor. Used by the operator
   // console on queue/timeline hover. Memoised per cursor; invalidates when
   // a divergence rebuilds the events/states arrays.
@@ -247,6 +252,7 @@ export function useResolver({
     cursor: sim.cursor,
     totalEvents: sim.events.length,
     events: sim.events,
+    eventHoldMs: sim.eventHoldMs,
     peekAt,
     pendingSubmissionsAt,
     projectRankAfter,

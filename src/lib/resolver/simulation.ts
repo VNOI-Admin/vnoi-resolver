@@ -11,19 +11,53 @@ import {
   type ResolverEvent
 } from './events';
 import { rankUsers } from './ranking';
-import type { InternalState } from './types';
+import type { InternalState, UserRow } from './types';
 
 export type SimulationCtx = NextEventCtx & {
   unofficialContestants: string[];
 };
 
+// Per-event-type hold times in ms (ported from ICPC ResolutionUtil.java's
+// DELAY_TIMES). These are the durations the operator's autoplay loop waits
+// AFTER applying events[i] before firing events[i+1]; the value reflects
+// the dramatic weight of the resulting state.
+//
+//   SELECT_TEAM:     camera lands on a new team — audience needs a beat
+//                    to refocus before pills start lighting up.
+//   SELECT_PROBLEM:  pending pill highlighted, verdict NOT yet revealed.
+//                    The drama beat — long enough to be felt, short
+//                    enough not to break tempo.
+//   SOLVED_MOVE:     verdict was YES and the team's rank shifted. The
+//                    longest hold: the audience has to absorb a row swap
+//                    that propagates up the board.
+//   SOLVED_STAY:     verdict YES but rank didn't change (rare — already
+//                    at top of cluster, or partial credit that didn't
+//                    pass anyone). Shorter; nothing to watch settle.
+//   FAILED:          verdict NO. Anticlimactic; move on.
+//   DEFAULT:         show_award / hide_award / end — autoplay
+//                    auto-pauses on awards anyway, so these are only
+//                    consulted when the operator manually resumes.
+export const HOLD_MS = {
+  SELECT_TEAM: 1300,
+  SELECT_PROBLEM: 1000,
+  SOLVED_MOVE: 2250,
+  SOLVED_STAY: 1500,
+  FAILED: 850,
+  DEFAULT: 1000
+} as const;
+
 export type SimState = {
   base: InternalState;
   cursor: number;
   events: ResolverEvent[];
-  // Invariant: states.length === events.length + 1. states[i] is the state
-  // *before* applying events[i]; states[cursor] is the visible state now.
+  // Invariant: states.length === events.length + 1 === eventHoldMs.length + 1.
+  // states[i] is the state *before* applying events[i]; states[cursor] is
+  // the visible state now.
   states: InternalState[];
+  // eventHoldMs[i] is the autoplay hold time AFTER applying events[i] —
+  // the duration the audience spends looking at the dramatic result of
+  // events[i] before events[i+1] fires. Indexed in lockstep with events[].
+  eventHoldMs: number[];
 };
 
 export type SimAction =
@@ -34,21 +68,69 @@ export type SimAction =
 // terminate in ~1k events; this leaves 3 orders of magnitude of slack.
 export const PRECOMPUTE_GUARD = 1_000_000;
 
+function rankByUserId(ranking: UserRow[]): Map<number, string> {
+  const m = new Map<number, string>();
+  for (const r of ranking) m.set(r.userId, r.rank);
+  return m;
+}
+
+// Classify a single event's aftermath into a hold duration.
+// `beforeRanking` is the ranking computed for the pre-event state;
+// `afterRanking` is for the post-event state. Both are required to detect
+// the SOLVED_MOVE / SOLVED_STAY distinction.
+export function classifyHoldMs(
+  event: ResolverEvent,
+  beforeRanking: UserRow[],
+  afterRanking: UserRow[],
+  ctx: SimulationCtx
+): number {
+  switch (event.kind) {
+    case 'mark_user':
+      return HOLD_MS.SELECT_TEAM;
+    case 'mark_problem':
+      return HOLD_MS.SELECT_PROBLEM;
+    case 'resolve': {
+      const sub = ctx.submissionById[event.submissionId];
+      if (!sub || sub.points === 0) return HOLD_MS.FAILED;
+      const beforeRank = rankByUserId(beforeRanking).get(event.userId);
+      const afterRank = rankByUserId(afterRanking).get(event.userId);
+      return beforeRank !== afterRank
+        ? HOLD_MS.SOLVED_MOVE
+        : HOLD_MS.SOLVED_STAY;
+    }
+    case 'show_award':
+    case 'hide_award':
+    case 'end':
+      return HOLD_MS.DEFAULT;
+  }
+}
+
 export function precomputeFrom(
   startState: InternalState,
   ctx: SimulationCtx
-): { events: ResolverEvent[]; states: InternalState[] } {
+): {
+  events: ResolverEvent[];
+  states: InternalState[];
+  eventHoldMs: number[];
+} {
   const events: ResolverEvent[] = [];
   const states: InternalState[] = [startState];
+  const eventHoldMs: number[] = [];
   let state = startState;
+  // Roll ranking forward across iterations: prevRanking starts as
+  // rankUsers(state[0]) and afterRanking gets reused as the next iter's
+  // prevRanking. Saves a redundant rankUsers per event.
+  let prevRanking = rankUsers(state, ctx.unofficialContestants);
   let i = 0;
   for (; i < PRECOMPUTE_GUARD; i++) {
-    const ranking = rankUsers(state, ctx.unofficialContestants);
-    const next = computeNextEvent(state, ranking, ctx);
+    const next = computeNextEvent(state, prevRanking, ctx);
     if (!next) break;
     events.push(next);
     state = applyEvent(state, next, ctx);
     states.push(state);
+    const afterRanking = rankUsers(state, ctx.unofficialContestants);
+    eventHoldMs.push(classifyHoldMs(next, prevRanking, afterRanking, ctx));
+    prevRanking = afterRanking;
     if (next.kind === 'end') break;
   }
   // Diagnostic if we hit the cap without emitting `end` — almost certainly
@@ -60,15 +142,15 @@ export function precomputeFrom(
         `terminating; reveal log is truncated. Likely a malformed dataset.`
     );
   }
-  return { events, states };
+  return { events, states, eventHoldMs };
 }
 
 export function initSimState(
   base: InternalState,
   ctx: SimulationCtx
 ): SimState {
-  const { events, states } = precomputeFrom(base, ctx);
-  return { base, cursor: 0, events, states };
+  const { events, states, eventHoldMs } = precomputeFrom(base, ctx);
+  return { base, cursor: 0, events, states, eventHoldMs };
 }
 
 export function makeReducer(ctx: SimulationCtx) {
@@ -91,16 +173,23 @@ export function makeReducer(ctx: SimulationCtx) {
 
       // Non-default choice → diverge. Re-precompute from the new state.
       const currentState = state.states[state.cursor]!;
-      const ranking = rankUsers(currentState, ctx.unofficialContestants);
+      const beforeRanking = rankUsers(currentState, ctx.unofficialContestants);
       const newEvent = computeNextEvent(
         currentState,
-        ranking,
+        beforeRanking,
         ctx,
         action.choice
       );
       if (!newEvent) return state; // choice out of range — no-op
 
       const newState = applyEvent(currentState, newEvent, ctx);
+      const afterRanking = rankUsers(newState, ctx.unofficialContestants);
+      const newHoldMs = classifyHoldMs(
+        newEvent,
+        beforeRanking,
+        afterRanking,
+        ctx
+      );
       const tail = precomputeFrom(newState, ctx);
       return {
         base: state.base,
@@ -113,6 +202,11 @@ export function makeReducer(ctx: SimulationCtx) {
           ...state.states.slice(0, state.cursor + 1),
           newState,
           ...tail.states.slice(1)
+        ],
+        eventHoldMs: [
+          ...state.eventHoldMs.slice(0, state.cursor),
+          newHoldMs,
+          ...tail.eventHoldMs
         ],
         cursor: state.cursor + 1
       };

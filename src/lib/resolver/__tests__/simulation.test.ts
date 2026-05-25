@@ -20,6 +20,7 @@ import type {
   SimulationCtx,
   SubmissionById
 } from '..';
+import { HOLD_MS, classifyHoldMs } from '../simulation';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const DATA_PATH = join(HERE, '../../../../public/vnoicup24/data.json');
@@ -271,5 +272,154 @@ describe('simulation reducer', () => {
     // pendingCount + 1 is out of range (valid indices are 0..pendingCount-1).
     const next = reduce(sim, { type: 'step', choice: pendingCount + 1 });
     expect(next).toBe(sim);
+  });
+});
+
+describe('classifyHoldMs / eventHoldMs', () => {
+  it('mark_user → SELECT_TEAM', () => {
+    const ctx = buildCtx();
+    expect(
+      classifyHoldMs({ kind: 'mark_user', userId: 1, rowIndex: 0 }, [], [], ctx)
+    ).toBe(HOLD_MS.SELECT_TEAM);
+  });
+
+  it('mark_problem → SELECT_PROBLEM', () => {
+    const ctx = buildCtx();
+    const someSub = inputData.submissions[0]!;
+    expect(
+      classifyHoldMs(
+        {
+          kind: 'mark_problem',
+          userId: someSub.userId,
+          problemId: someSub.problemId,
+          submissionId: someSub.submissionId
+        },
+        [],
+        [],
+        ctx
+      )
+    ).toBe(HOLD_MS.SELECT_PROBLEM);
+  });
+
+  it('resolve with 0 points → FAILED', () => {
+    const ctx = buildCtx();
+    const failed = inputData.submissions.find((s) => s.points === 0);
+    if (!failed) {
+      throw new Error('no 0-point submission in fixture');
+    }
+    expect(
+      classifyHoldMs(
+        {
+          kind: 'resolve',
+          userId: failed.userId,
+          submissionId: failed.submissionId
+        },
+        [],
+        [],
+        ctx
+      )
+    ).toBe(HOLD_MS.FAILED);
+  });
+
+  it('resolve with points > 0 and unchanged rank → SOLVED_STAY', () => {
+    const ctx = buildCtx();
+    const winner = inputData.submissions.find((s) => s.points > 0);
+    if (!winner) throw new Error('no winning submission in fixture');
+    // Both rankings show userId at the same rank.
+    const before = [
+      { userId: winner.userId, rank: '5' } as unknown as ReturnType<
+        typeof rankUsers
+      >[number]
+    ];
+    const after = [
+      { userId: winner.userId, rank: '5' } as unknown as ReturnType<
+        typeof rankUsers
+      >[number]
+    ];
+    expect(
+      classifyHoldMs(
+        {
+          kind: 'resolve',
+          userId: winner.userId,
+          submissionId: winner.submissionId
+        },
+        before,
+        after,
+        ctx
+      )
+    ).toBe(HOLD_MS.SOLVED_STAY);
+  });
+
+  it('resolve with points > 0 and shifted rank → SOLVED_MOVE', () => {
+    const ctx = buildCtx();
+    const winner = inputData.submissions.find((s) => s.points > 0)!;
+    const before = [
+      { userId: winner.userId, rank: '7' } as unknown as ReturnType<
+        typeof rankUsers
+      >[number]
+    ];
+    const after = [
+      { userId: winner.userId, rank: '3' } as unknown as ReturnType<
+        typeof rankUsers
+      >[number]
+    ];
+    expect(
+      classifyHoldMs(
+        {
+          kind: 'resolve',
+          userId: winner.userId,
+          submissionId: winner.submissionId
+        },
+        before,
+        after,
+        ctx
+      )
+    ).toBe(HOLD_MS.SOLVED_MOVE);
+  });
+
+  it('non-resolve / non-select events → DEFAULT', () => {
+    const ctx = buildCtx();
+    expect(
+      classifyHoldMs(
+        { kind: 'show_award', rank: '1', imageSrc: 'x' },
+        [],
+        [],
+        ctx
+      )
+    ).toBe(HOLD_MS.DEFAULT);
+    expect(classifyHoldMs({ kind: 'hide_award' }, [], [], ctx)).toBe(
+      HOLD_MS.DEFAULT
+    );
+    expect(classifyHoldMs({ kind: 'end' }, [], [], ctx)).toBe(HOLD_MS.DEFAULT);
+  });
+
+  it('eventHoldMs is in lockstep with events array', () => {
+    const sim = buildInitial();
+    expect(sim.eventHoldMs.length).toBe(sim.events.length);
+    // Every entry is a positive finite number.
+    for (const ms of sim.eventHoldMs) {
+      expect(Number.isFinite(ms)).toBe(true);
+      expect(ms).toBeGreaterThan(0);
+    }
+  });
+
+  it('divergence preserves eventHoldMs prefix and re-classifies the tail', () => {
+    const ctx = buildCtx();
+    const reduce = makeReducer(ctx);
+    const sim0 = buildInitial();
+    const { cursor } = findMarkProblemBoundary(sim0);
+
+    let sim = sim0;
+    for (let i = 0; i < cursor; i++) {
+      sim = reduce(sim, { type: 'step', choice: undefined });
+    }
+    const diverged = reduce(sim, { type: 'step', choice: 1 });
+
+    // Prefix identical.
+    for (let i = 0; i < cursor; i++) {
+      expect(diverged.eventHoldMs[i]).toBe(sim0.eventHoldMs[i]);
+    }
+    // Length still in lockstep.
+    expect(diverged.eventHoldMs.length).toBe(diverged.events.length);
   });
 });
