@@ -80,8 +80,17 @@ export function useResolver({
     userId: number,
     submissionId: number
   ) => string | null;
+  // Full projected board after revealing one pending submission — used by
+  // the operator's board preview when hovering a chooser row.
+  projectSnapshotAfter: (
+    cursor: number,
+    userId: number,
+    submissionId: number
+  ) => Snapshot | null;
   step: (choice?: number) => void;
   rollback: () => void;
+  // Absolute cursor move along the precomputed timeline (operator jump-nav).
+  seek: (cursor: number) => void;
 } {
   const userIds = useMemo<number[]>(
     () => inputData.users.map((user) => user.userId),
@@ -201,8 +210,12 @@ export function useResolver({
     [sim, submissionById]
   );
 
-  const projectRankAfter = useCallback(
-    (cursor: number, userId: number, submissionId: number): string | null => {
+  // Full projected board after revealing a SINGLE pending submission for a
+  // user (mark_problem + resolve on a transient state copy — no mutation of
+  // sim.states). The marked user/problem are set so the board preview can
+  // highlight the row. Returns null when the submission isn't pending here.
+  const projectSnapshotAfter = useCallback(
+    (cursor: number, userId: number, submissionId: number): Snapshot | null => {
       const c = Math.max(0, Math.min(sim.events.length, cursor));
       const state = sim.states[c];
       const user = state?.users[userId];
@@ -229,11 +242,23 @@ export function useResolver({
         applyCtx
       );
 
-      const ranking = rankUsers(afterResolve, unofficialContestants);
-      const row = ranking.find((r) => r.userId === userId);
-      return row?.rank ?? null;
+      return {
+        data: rankUsers(afterResolve, unofficialContestants),
+        currentRowIndex: afterResolve.currentRowIndex,
+        markedUserId: userId,
+        markedProblemId: sub.problemId,
+        imageSrc: null
+      };
     },
     [sim, submissionById, pointByProblemId, unofficialContestants]
+  );
+
+  const projectRankAfter = useCallback(
+    (cursor: number, userId: number, submissionId: number): string | null => {
+      const snap = projectSnapshotAfter(cursor, userId, submissionId);
+      return snap?.data.find((r) => r.userId === userId)?.rank ?? null;
+    },
+    [projectSnapshotAfter]
   );
 
   const step = useCallback(
@@ -242,6 +267,11 @@ export function useResolver({
   );
 
   const rollback = useCallback(() => dispatch({ type: 'rollback' }), []);
+
+  const seek = useCallback(
+    (cursor: number) => dispatch({ type: 'seek', cursor }),
+    []
+  );
 
   return {
     data,
@@ -256,7 +286,9 @@ export function useResolver({
     peekAt,
     pendingSubmissionsAt,
     projectRankAfter,
+    projectSnapshotAfter,
     step,
-    rollback
+    rollback,
+    seek
   };
 }

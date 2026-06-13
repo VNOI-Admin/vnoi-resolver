@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 
 import type { ResolverEvent } from '../lib/resolver';
 import { getProblemCodeFromIndex } from '../lib/resolver';
@@ -106,7 +106,9 @@ export function NextPane({
   snapshot,
   isPreviewing,
   pendingChoices,
-  projectRankAfter
+  projectRankAfter,
+  projectSnapshotAfter,
+  onPickChoice
 }: {
   events: readonly ResolverEvent[];
   cursor: number;
@@ -126,12 +128,54 @@ export function NextPane({
     userId: number,
     submissionId: number
   ) => string | null;
+  projectSnapshotAfter: (
+    cursor: number,
+    userId: number,
+    submissionId: number
+  ) => Snapshot | null;
+  // Commit a chooser pick by index (mouse equivalent of the 1–9 hotkeys).
+  // Maps to manualStep, so it pauses autoplay and steps with that choice.
+  onPickChoice: (choiceIndex: number) => void;
 }) {
   const nextEvent = events[cursor];
   const isChooser =
     !!nextEvent &&
     nextEvent.kind === 'mark_problem' &&
     pendingChoices.length >= 2;
+
+  // Which pending submission the operator is hovering in the chooser. When
+  // set, the board preview shows the projected board AFTER revealing just
+  // that submission — so the operator can compare "what does each choice do
+  // to the standings" before committing. Validity is re-derived each render
+  // against pendingChoices, so a cursor change that swaps the chooser drops
+  // a stale hover without an effect.
+  const [hoveredChoice, setHoveredChoice] = useState<number | null>(null);
+  const chooserUserId =
+    nextEvent && nextEvent.kind === 'mark_problem' ? nextEvent.userId : null;
+  const validHover =
+    isChooser &&
+    hoveredChoice !== null &&
+    pendingChoices.some((c) => c.submissionId === hoveredChoice)
+      ? hoveredChoice
+      : null;
+  const projectedBoard =
+    validHover !== null && chooserUserId !== null
+      ? projectSnapshotAfter(cursor, chooserUserId, validHover)
+      : null;
+  const boardSnapshot = projectedBoard ?? snapshot;
+  const boardLabel = projectedBoard
+    ? (() => {
+        const choice = pendingChoices.find(
+          (c) => c.submissionId === validHover
+        );
+        const idx =
+          choice !== undefined
+            ? ctx.problemIndexById[choice.problemId]
+            : undefined;
+        const code = idx !== undefined ? getProblemCodeFromIndex(idx) : '?';
+        return `Board if ${code} revealed`;
+      })()
+    : undefined;
 
   if (!nextEvent) {
     const top3 = snapshot.data.slice(0, 3);
@@ -182,6 +226,9 @@ export function NextPane({
                 : null
             }
             isPreviewing={isPreviewing}
+            hoveredChoice={validHover}
+            onHoverChoice={setHoveredChoice}
+            onPick={isPreviewing ? undefined : onPickChoice}
           />
         ) : (
           <SingularBody
@@ -192,6 +239,12 @@ export function NextPane({
             projectRankAfter={projectRankAfter}
           />
         )}
+        <BoardPreview
+          snapshot={boardSnapshot}
+          isPreviewing={isPreviewing}
+          label={boardLabel}
+          projected={projectedBoard !== null}
+        />
         <div className="op-next-key">
           {isChooser ? (
             isPreviewing ? (
@@ -213,6 +266,90 @@ export function NextPane({
         </div>
       </div>
     </section>
+  );
+}
+
+const BOARD_WINDOW = 11;
+
+/**
+ * Compact standings window for the center pane. Reads the ranked board from
+ * `snapshot.data` (live or peeked — the parent already swaps it on hover),
+ * so scrubbing the queue/timeline scrolls this preview through the actual
+ * board state at each cursor without committing. Windowed around the marked
+ * team (or the cursor's current row before anyone is marked) so the rows
+ * that are about to move stay on screen.
+ */
+function BoardPreview({
+  snapshot,
+  isPreviewing,
+  label,
+  projected = false
+}: {
+  snapshot: Snapshot;
+  isPreviewing: boolean;
+  // Explicit header label — set when previewing a hovered chooser choice
+  // ("Board if C revealed"). Falls back to the live/preview wording.
+  label?: string;
+  // Whether the snapshot is a hypothetical projection (hovered choice) vs.
+  // the real board at the cursor — drives a subtle accent on the header.
+  projected?: boolean;
+}) {
+  const { data, markedUserId, currentRowIndex } = snapshot;
+  if (data.length === 0) return null;
+
+  const markedIdx =
+    markedUserId >= 0 ? data.findIndex((r) => r.userId === markedUserId) : -1;
+  // Focus the marked team if there is one; otherwise the cursor's row (the
+  // bottom of the board before the first reveal). Clamp into a valid window.
+  const focusIdx =
+    markedIdx >= 0
+      ? markedIdx
+      : Math.max(0, Math.min(data.length - 1, currentRowIndex));
+  const half = Math.floor(BOARD_WINDOW / 2);
+  const start = Math.max(
+    0,
+    Math.min(focusIdx - half, Math.max(0, data.length - BOARD_WINDOW))
+  );
+  const window = data.slice(start, start + BOARD_WINDOW);
+  const hiddenAbove = start;
+  const hiddenBelow = Math.max(0, data.length - (start + window.length));
+
+  return (
+    <div
+      className={
+        'op-board-preview' + (projected ? ' op-board-preview-projected' : '')
+      }
+    >
+      <div className="op-board-preview-head">
+        <span className="op-board-preview-label">
+          {label ?? (isPreviewing ? 'Board at preview' : 'Board now')}
+        </span>
+        {hiddenAbove > 0 ? (
+          <span className="op-board-preview-more">↑ {hiddenAbove}</span>
+        ) : null}
+      </div>
+      <ol className="op-board-list">
+        {window.map((row) => (
+          <li
+            key={row.userId}
+            className={
+              'op-board-row' +
+              (row.userId === markedUserId ? ' op-board-row-marked' : '')
+            }
+          >
+            <span className="op-board-rank">{row.rank || '—'}</span>
+            <span className="op-board-name">{row.fullName}</span>
+            <span className="op-board-handle">{row.username}</span>
+            <span className="op-board-total">{row.total}</span>
+          </li>
+        ))}
+      </ol>
+      {hiddenBelow > 0 ? (
+        <div className="op-board-preview-more op-board-preview-more-below">
+          ↓ {hiddenBelow}
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -313,7 +450,10 @@ function ChooserBody({
   choices,
   ctx,
   activeUserName,
-  isPreviewing
+  isPreviewing,
+  hoveredChoice,
+  onHoverChoice,
+  onPick
 }: {
   choices: ReadonlyArray<{
     submissionId: number;
@@ -328,6 +468,13 @@ function ChooserBody({
   // Mute the kbd chips when previewing: the keys would commit against the
   // live cursor, not the previewed event.
   isPreviewing: boolean;
+  // Hovered row drives the board-preview projection in the parent.
+  hoveredChoice: number | null;
+  onHoverChoice: (submissionId: number | null) => void;
+  // Click-to-commit by choice index. Undefined while previewing — a click
+  // then would commit against the live cursor, not the shown (previewed)
+  // event, so rows are inert in that mode (matching the muted hotkeys).
+  onPick?: (choiceIndex: number) => void;
 }) {
   return (
     <>
@@ -339,6 +486,7 @@ function ChooserBody({
         className={
           'op-chooser-list' + (isPreviewing ? ' op-chooser-list-preview' : '')
         }
+        onMouseLeave={() => onHoverChoice(null)}
       >
         {choices.slice(0, 9).map((c, i) => {
           const prob = ctx.problemsById[c.problemId];
@@ -357,8 +505,15 @@ function ChooserBody({
                 'op-chooser-item' +
                 (isDefault ? ' op-chooser-item-default' : '') +
                 (resolvesToZero ? ' op-chooser-item-zero' : '') +
-                (rankShifts ? ' op-chooser-item-shifts' : '')
+                (rankShifts ? ' op-chooser-item-shifts' : '') +
+                (hoveredChoice === c.submissionId
+                  ? ' op-chooser-item-hovered'
+                  : '') +
+                (onPick ? ' op-chooser-item-clickable' : '')
               }
+              onMouseEnter={() => onHoverChoice(c.submissionId)}
+              onClick={onPick ? () => onPick(i) : undefined}
+              title={onPick ? 'Click to reveal this submission' : undefined}
             >
               <kbd
                 className={
@@ -408,15 +563,19 @@ export function QueuePane({
   pivotCursor,
   ctx,
   onHoverCursor,
-  onLeaveCursor
+  onLeaveCursor,
+  onCommitCursor
 }: {
   events: readonly ResolverEvent[];
   pivotCursor: number;
   ctx: LookupCtx;
   onHoverCursor: (cursor: number) => void;
   onLeaveCursor: () => void;
+  // Click a row → jump the live cursor to that absolute position. Always
+  // live-relative (pivotCursor is the live cursor), so no preview gating.
+  onCommitCursor: (cursor: number) => void;
 }) {
-  const QUEUE_LEN = 10;
+  const QUEUE_LEN = 20;
   const items = useMemo(() => {
     const slice = events.slice(pivotCursor, pivotCursor + QUEUE_LEN);
     return slice.map((e, i) => ({
@@ -440,11 +599,13 @@ export function QueuePane({
               <li
                 key={pivotCursor + i}
                 className={
-                  'op-queue-item' +
+                  'op-queue-item op-queue-item-clickable' +
                   (i === 0 ? ' op-queue-item-imminent' : '') +
                   (item.description.dramatic ? ' op-queue-item-dramatic' : '')
                 }
                 onMouseEnter={() => onHoverCursor(item.previewCursor)}
+                onClick={() => onCommitCursor(item.previewCursor)}
+                title={`Jump here (+${i + 1})`}
               >
                 <span className="op-queue-num">+{i + 1}</span>
                 <span className="op-queue-desc">{item.description.long}</span>

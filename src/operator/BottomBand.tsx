@@ -79,15 +79,30 @@ export function Timeline({
   );
 }
 
-/** Rollback / play-pause / step / speed slider. Mouse-fallback for the
- *  keyboard bindings; each button advertises its hotkey for discoverability. */
+// Jump-navigation callbacks + availability flags. `can*` disable a button
+// when there's no target in that direction (e.g. no further award).
+export type SeekControls = {
+  prevAward: () => void;
+  nextAward: () => void;
+  prevMove: () => void;
+  nextMove: () => void;
+  canPrevAward: boolean;
+  canNextAward: boolean;
+  canPrevMove: boolean;
+  canNextMove: boolean;
+};
+
+/** Rollback / play-pause / step / speed slider + a seek cluster (jump to
+ *  prev/next award and rank-change). Mouse-fallback for the keyboard
+ *  bindings; each button advertises its hotkey for discoverability. */
 export function Transport({
   playing,
   speed,
   onTogglePlay,
   onStep,
   onRollback,
-  onSpeed
+  onSpeed,
+  seek
 }: {
   playing: boolean;
   speed: number;
@@ -95,9 +110,56 @@ export function Transport({
   onStep: () => void;
   onRollback: () => void;
   onSpeed: (n: number) => void;
+  seek: SeekControls;
 }) {
   return (
     <div className="op-transport">
+      <div className="op-transport-seek">
+        <button
+          type="button"
+          className="op-transport-btn op-transport-btn-seek"
+          onClick={() => seek.prevMove()}
+          disabled={!seek.canPrevMove}
+          title="Jump back to previous rank change (,)"
+          aria-label="Previous rank change"
+        >
+          <span className="op-transport-glyph">⤒</span>
+          <kbd className="op-transport-key">,</kbd>
+        </button>
+        <button
+          type="button"
+          className="op-transport-btn op-transport-btn-seek"
+          onClick={() => seek.prevAward()}
+          disabled={!seek.canPrevAward}
+          title="Jump back to previous award ([)"
+          aria-label="Previous award"
+        >
+          <span className="op-transport-glyph">🏆‹</span>
+          <kbd className="op-transport-key">[</kbd>
+        </button>
+        <button
+          type="button"
+          className="op-transport-btn op-transport-btn-seek"
+          onClick={() => seek.nextAward()}
+          disabled={!seek.canNextAward}
+          title="Jump to next award (])"
+          aria-label="Next award"
+        >
+          <span className="op-transport-glyph">›🏆</span>
+          <kbd className="op-transport-key">]</kbd>
+        </button>
+        <button
+          type="button"
+          className="op-transport-btn op-transport-btn-seek"
+          onClick={() => seek.nextMove()}
+          disabled={!seek.canNextMove}
+          title="Jump to next rank change (.)"
+          aria-label="Next rank change"
+        >
+          <span className="op-transport-glyph">⤓</span>
+          <kbd className="op-transport-key">.</kbd>
+        </button>
+      </div>
       <div className="op-transport-btn-group">
         <button
           type="button"

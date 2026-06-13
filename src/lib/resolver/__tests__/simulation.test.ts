@@ -151,6 +151,57 @@ describe('simulation reducer', () => {
     expect(next).toBe(sim);
   });
 
+  it('seek moves the cursor to an absolute position without touching the timeline', () => {
+    const ctx = buildCtx();
+    const reduce = makeReducer(ctx);
+    const sim = buildInitial();
+
+    const target = Math.min(20, sim.events.length);
+    const next = reduce(sim, { type: 'seek', cursor: target });
+    expect(next.cursor).toBe(target);
+    // Timeline arrays preserved by reference — seek never re-precomputes.
+    expect(next.events).toBe(sim.events);
+    expect(next.states).toBe(sim.states);
+    expect(next.eventHoldMs).toBe(sim.eventHoldMs);
+  });
+
+  it('seek clamps out-of-range targets into [0, events.length]', () => {
+    const ctx = buildCtx();
+    const reduce = makeReducer(ctx);
+    const sim = buildInitial();
+
+    expect(reduce(sim, { type: 'seek', cursor: -50 }).cursor).toBe(0);
+    expect(reduce(sim, { type: 'seek', cursor: 999999 }).cursor).toBe(
+      sim.events.length
+    );
+  });
+
+  it('seek to the current cursor is a no-op (same reference)', () => {
+    const ctx = buildCtx();
+    const reduce = makeReducer(ctx);
+    const sim = buildInitial();
+    expect(reduce(sim, { type: 'seek', cursor: 0 })).toBe(sim);
+  });
+
+  it('seek lands at the same state a sequence of steps would reach', () => {
+    const ctx = buildCtx();
+    const reduce = makeReducer(ctx);
+    const sim0 = buildInitial();
+
+    const target = Math.min(15, sim0.events.length);
+    // Path A: step target times.
+    let stepped = sim0;
+    for (let i = 0; i < target; i++) {
+      stepped = reduce(stepped, { type: 'step', choice: undefined });
+    }
+    // Path B: one seek.
+    const seeked = reduce(sim0, { type: 'seek', cursor: target });
+
+    expect(seeked.cursor).toBe(stepped.cursor);
+    // Same visible state (the cursor indexes the same shared states array).
+    expect(seeked.states[seeked.cursor]).toBe(stepped.states[stepped.cursor]);
+  });
+
   it('step with non-default choice on mark_problem diverges and re-precomputes the tail', () => {
     const ctx = buildCtx();
     const reduce = makeReducer(ctx);

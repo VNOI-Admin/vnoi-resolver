@@ -62,7 +62,12 @@ export type SimState = {
 
 export type SimAction =
   | { type: 'step'; choice: number | undefined }
-  | { type: 'rollback' };
+  | { type: 'rollback' }
+  // Absolute cursor move along the existing precomputed timeline. Used by
+  // operator jump-navigation. A seek NEVER diverges (choices are unchanged),
+  // so it's an O(1) cursor set — and broadcasting it as ONE action keeps the
+  // audience exactly in sync, vs. flooding N step/rollback messages.
+  | { type: 'seek'; cursor: number };
 
 // Hard cap to keep a malformed dataset from looping forever. Real datasets
 // terminate in ~1k events; this leaves 3 orders of magnitude of slack.
@@ -212,6 +217,15 @@ export function makeReducer(ctx: SimulationCtx) {
       };
     }
 
+    if (action.type === 'seek') {
+      // O(1) absolute move, clamped. Same-cursor seeks return the same
+      // reference so callers/memo stay stable.
+      const target = Math.max(0, Math.min(state.events.length, action.cursor));
+      if (target === state.cursor) return state;
+      return { ...state, cursor: target };
+    }
+
+    // rollback
     if (state.cursor === 0) return state;
     return { ...state, cursor: state.cursor - 1 };
   };

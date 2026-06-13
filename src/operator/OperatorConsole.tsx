@@ -23,8 +23,14 @@ import { toggleFullscreen } from '../util/fullscreen';
 import { fireAwardConfetti } from '../util/confetti';
 import { StatusStrip } from './StatusStrip';
 import { NowPane, NextPane, QueuePane } from './Panes';
-import { Timeline, Transport } from './BottomBand';
+import { Timeline, Transport, type SeekControls } from './BottomBand';
 import { buildLookupCtx, type LookupCtx } from './format';
+import {
+  nextAwardCursor,
+  prevAwardCursor,
+  nextMoveCursor,
+  prevMoveCursor
+} from './seek';
 
 /**
  * Two-mode operator window:
@@ -87,8 +93,10 @@ export function OperatorConsole({
     peekAt,
     pendingSubmissionsAt,
     projectRankAfter,
+    projectSnapshotAfter,
     step: rawStep,
-    rollback: rawRollback
+    rollback: rawRollback,
+    seek: rawSeek
   } = useResolver({
     inputData: _inputData,
     imageData,
@@ -123,6 +131,20 @@ export function OperatorConsole({
     onAction?.({ type: 'rollback' });
   }, [cursor, rawRollback, onAction]);
 
+  // Absolute cursor move broadcast as ONE seek action — the audience replays
+  // the same single action and lands at the identical cursor. (The earlier
+  // approach flooded N step/rollback messages per jump, which desynced the
+  // audience under burst delivery and bloated the action log.)
+  const seekTo = useCallback(
+    (target: number) => {
+      const clamped = Math.max(0, Math.min(totalEvents, target));
+      if (clamped === cursor) return;
+      rawSeek(clamped);
+      onAction?.({ type: 'seek', cursor: clamped });
+    },
+    [cursor, totalEvents, rawSeek, onAction]
+  );
+
   const [playing, setPlaying] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
   const [showFps, setShowFps] = useState(false);
@@ -134,12 +156,17 @@ export function OperatorConsole({
     setHoverCursor(null);
   }, [audienceConnected]);
 
-  // Auto-clear a stale hoverCursor when autoplay's live cursor catches up.
-  // Without this, the preview pane freezes on a now-past state while the
-  // status strip and queue display a "preview" tag that's actually behind
-  // live — the display would lie to the operator during a fast reveal.
+  // Auto-clear a stale hoverCursor only when the LIVE cursor ADVANCES into
+  // it (autoplay/step overtaking a forward hover). Gated on an actual cursor
+  // change so a deliberate BACKWARD hover — scrubbing the timeline to an
+  // already-revealed point — isn't instantly wiped (that's a valid preview,
+  // not a stale one). Without the gate, any hoverCursor <= cursor cleared on
+  // the hover itself, breaking backward timeline scrub.
+  const prevCursorRef = useRef(cursor);
   useEffect(() => {
-    if (hoverCursor !== null && hoverCursor <= cursor) {
+    const advanced = cursor !== prevCursorRef.current;
+    prevCursorRef.current = cursor;
+    if (advanced && hoverCursor !== null && hoverCursor <= cursor) {
       setHoverCursor(null);
     }
   }, [cursor, hoverCursor]);
@@ -158,6 +185,59 @@ export function OperatorConsole({
   }, [pause, rollback]);
 
   const clearPreview = useCallback(() => setHoverCursor(null), []);
+
+  // Jump pauses autoplay, then seeks to the target in one atomic action.
+  const jumpTo = useCallback(
+    (target: number) => {
+      pause();
+      seekTo(target);
+    },
+    [pause, seekTo]
+  );
+
+  const jumpNextAward = useCallback(() => {
+    const t = nextAwardCursor(events, cursor);
+    if (t !== null) jumpTo(t);
+  }, [events, cursor, jumpTo]);
+  const jumpPrevAward = useCallback(() => {
+    const t = prevAwardCursor(events, cursor);
+    if (t !== null) jumpTo(t);
+  }, [events, cursor, jumpTo]);
+  const jumpNextMove = useCallback(() => {
+    const t = nextMoveCursor(eventHoldMs, cursor);
+    if (t !== null) jumpTo(t);
+  }, [eventHoldMs, cursor, jumpTo]);
+  const jumpPrevMove = useCallback(() => {
+    const t = prevMoveCursor(eventHoldMs, cursor);
+    if (t !== null) jumpTo(t);
+  }, [eventHoldMs, cursor, jumpTo]);
+  const jumpToStart = useCallback(() => jumpTo(0), [jumpTo]);
+  const jumpToEnd = useCallback(
+    () => jumpTo(totalEvents),
+    [jumpTo, totalEvents]
+  );
+
+  const seek = useMemo<SeekControls>(
+    () => ({
+      prevAward: jumpPrevAward,
+      nextAward: jumpNextAward,
+      prevMove: jumpPrevMove,
+      nextMove: jumpNextMove,
+      canPrevAward: prevAwardCursor(events, cursor) !== null,
+      canNextAward: nextAwardCursor(events, cursor) !== null,
+      canPrevMove: prevMoveCursor(eventHoldMs, cursor) !== null,
+      canNextMove: nextMoveCursor(eventHoldMs, cursor) !== null
+    }),
+    [
+      events,
+      eventHoldMs,
+      cursor,
+      jumpPrevAward,
+      jumpNextAward,
+      jumpPrevMove,
+      jumpNextMove
+    ]
+  );
 
   // 1–9 are double-gated: live cursor must be on a mark_problem with 2+
   // pendings AND the index must be in range. Without this `1` outside the
@@ -182,6 +262,14 @@ export function OperatorConsole({
   useKeyPress('9', chooserKey(8), shortcutsEnabled && chooserActive);
   useKeyPress(' ', () => setPlaying((p) => !p), shortcutsEnabled);
   useKeyPress('c', () => setShowControls((s) => !s), shortcutsEnabled);
+  // Seek navigation. ] [ for awards, . , for rank-changes (the unshifted
+  // > < keys read as "seek"), Home/End for the ends of the reveal.
+  useKeyPress(']', jumpNextAward, shortcutsEnabled);
+  useKeyPress('[', jumpPrevAward, shortcutsEnabled);
+  useKeyPress('.', jumpNextMove, shortcutsEnabled);
+  useKeyPress(',', jumpPrevMove, shortcutsEnabled);
+  useKeyPress('Home', jumpToStart, shortcutsEnabled);
+  useKeyPress('End', jumpToEnd, shortcutsEnabled);
   // H toggles regardless so it can also close the modal.
   useKeyPress('h', () => setShowHelp((s) => !s));
   useKeyPress('f', toggleFullscreen, shortcutsEnabled);
@@ -270,6 +358,7 @@ export function OperatorConsole({
           peekAt={peekAt}
           pendingSubmissionsAt={pendingSubmissionsAt}
           projectRankAfter={projectRankAfter}
+          projectSnapshotAfter={projectSnapshotAfter}
           liveSnapshot={liveSnapshot}
           hoverCursor={hoverCursor}
           setHoverCursor={setHoverCursor}
@@ -284,6 +373,8 @@ export function OperatorConsole({
           setSpeed={setSpeed}
           manualStep={manualStep}
           manualRollback={manualRollback}
+          seek={seek}
+          jumpTo={jumpTo}
         />
       ) : (
         <ScoreboardBody
@@ -381,6 +472,7 @@ function ConsoleBody({
   peekAt,
   pendingSubmissionsAt,
   projectRankAfter,
+  projectSnapshotAfter,
   liveSnapshot,
   hoverCursor,
   setHoverCursor,
@@ -394,7 +486,9 @@ function ConsoleBody({
   speed,
   setSpeed,
   manualStep,
-  manualRollback
+  manualRollback,
+  seek,
+  jumpTo
 }: {
   events: readonly ResolverEvent[];
   cursor: number;
@@ -406,6 +500,11 @@ function ConsoleBody({
     userId: number,
     submissionId: number
   ) => string | null;
+  projectSnapshotAfter: (
+    cursor: number,
+    userId: number,
+    submissionId: number
+  ) => Snapshot | null;
   liveSnapshot: Snapshot;
   hoverCursor: number | null;
   setHoverCursor: (n: number) => void;
@@ -420,6 +519,9 @@ function ConsoleBody({
   setSpeed: (n: number) => void;
   manualStep: (choice?: number) => void;
   manualRollback: () => void;
+  seek: SeekControls;
+  // Commit the live cursor to an absolute position (click a queue row).
+  jumpTo: (cursor: number) => void;
 }) {
   const isPreviewing = hoverCursor !== null && hoverCursor !== cursor;
   const snapshot = isPreviewing ? peekAt(hoverCursor) : liveSnapshot;
@@ -479,6 +581,8 @@ function ConsoleBody({
           isPreviewing={isPreviewing}
           pendingChoices={pendingChoices}
           projectRankAfter={projectRankAfter}
+          projectSnapshotAfter={projectSnapshotAfter}
+          onPickChoice={manualStep}
         />
         <QueuePane
           events={events}
@@ -486,6 +590,7 @@ function ConsoleBody({
           ctx={ctx}
           onHoverCursor={setHoverCursor}
           onLeaveCursor={clearPreview}
+          onCommitCursor={jumpTo}
         />
       </div>
       <div className="op-bottom">
@@ -503,6 +608,7 @@ function ConsoleBody({
           onStep={manualStep}
           onRollback={manualRollback}
           onSpeed={setSpeed}
+          seek={seek}
         />
       </div>
     </div>
@@ -570,6 +676,18 @@ function HelpOverlay({
             <kbd>Space</kbd>
           </dt>
           <dd>Play / pause autoplay</dd>
+          <dt>
+            <kbd>]</kbd> / <kbd>[</kbd>
+          </dt>
+          <dd>Jump to next / previous award</dd>
+          <dt>
+            <kbd>.</kbd> / <kbd>,</kbd>
+          </dt>
+          <dd>Jump to next / previous rank change</dd>
+          <dt>
+            <kbd>Home</kbd> / <kbd>End</kbd>
+          </dt>
+          <dd>Jump to the start / end of the reveal</dd>
           {showCKeyHint ? (
             <>
               <dt>

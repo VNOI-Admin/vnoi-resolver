@@ -260,7 +260,8 @@ function AudienceLive({
     markedProblemId,
     imageSrc,
     step,
-    rollback
+    rollback,
+    seek
   } = useResolver({
     inputData: filteredInput,
     imageData: init.imageData,
@@ -270,20 +271,31 @@ function AudienceLive({
 
   const stepRef = useRef(step);
   const rollbackRef = useRef(rollback);
+  const seekRef = useRef(seek);
   useEffect(() => {
     stepRef.current = step;
   }, [step]);
   useEffect(() => {
     rollbackRef.current = rollback;
   }, [rollback]);
+  useEffect(() => {
+    seekRef.current = seek;
+  }, [seek]);
 
   const appliedCount = useRef(0);
   useEffect(() => {
     while (appliedCount.current < actionLog.length) {
       const action = actionLog[appliedCount.current]!;
       try {
+        // Explicit per-type dispatch. Unknown action types (e.g. a NEWER
+        // operator build broadcasting an action this audience doesn't know)
+        // are IGNORED rather than falling through to rollback — a stale
+        // audience must never rollback-storm on an unrecognised action,
+        // which is exactly what the old `else → rollback` fallback did when
+        // `seek` was introduced.
         if (action.type === 'step') stepRef.current(action.choice);
-        else rollbackRef.current();
+        else if (action.type === 'rollback') rollbackRef.current();
+        else if (action.type === 'seek') seekRef.current(action.cursor);
       } catch (err) {
         console.warn(
           '[Audience] applyEvent failed at index',

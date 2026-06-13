@@ -375,6 +375,100 @@
   font-style: italic;
 }
 
+/* --- Board preview (windowed standings in the NEXT pane) --------------- */
+
+.op-board-preview {
+  /* Fill the space between the reveal headline and the key hint; the list
+   * scrolls internally if the window ever exceeds the available height. */
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.op-board-preview-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ui-text-muted, #94a3b8);
+}
+
+/* When the board is a hovered-choice projection, accent the header label so
+ * it's unmistakably hypothetical, not the live board. */
+.op-board-preview-projected .op-board-preview-label {
+  color: var(--ui-accent, #22d3ee);
+  font-weight: 700;
+}
+
+.op-board-preview-more {
+  font-size: 10px;
+  color: var(--ui-text-muted, #94a3b8);
+  opacity: 0.7;
+  font-variant-numeric: tabular-nums;
+}
+
+.op-board-preview-more-below {
+  text-align: center;
+  padding-top: 2px;
+}
+
+.op-board-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.op-board-row {
+  display: grid;
+  grid-template-columns: 2.5em 1fr auto auto;
+  align-items: baseline;
+  gap: 10px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+
+.op-board-row-marked {
+  background: color-mix(in srgb, var(--ui-accent, #22d3ee) 16%, transparent);
+}
+
+.op-board-rank {
+  color: var(--ui-text-muted, #94a3b8);
+  font-weight: 600;
+  text-align: right;
+}
+
+.op-board-row-marked .op-board-rank {
+  color: var(--ui-text, #e2e8f0);
+}
+
+.op-board-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.op-board-handle {
+  color: var(--ui-text-muted, #94a3b8);
+  font-size: 12px;
+}
+
+.op-board-total {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
 /* Chooser (NEXT pane when there are 2+ pending submissions) */
 
 .op-chooser-head {
@@ -427,6 +521,20 @@
   background: color-mix(in srgb, var(--ui-text-muted, #94a3b8) 5%, transparent);
   font-size: 14px;
   font-variant-numeric: tabular-nums;
+  box-shadow: inset 0 0 0 1px transparent;
+  transition: box-shadow 0.1s;
+}
+
+/* Pointer only when a click actually commits (not while previewing). */
+.op-chooser-item-clickable {
+  cursor: pointer;
+}
+
+/* Hovering a row projects its board below; ring it so the operator knows
+ * which choice the projection corresponds to. */
+.op-chooser-item-hovered {
+  box-shadow: inset 0 0 0 1px
+    color-mix(in srgb, var(--ui-accent, #22d3ee) 70%, transparent);
 }
 
 .op-chooser-item-default {
@@ -580,6 +688,11 @@
   transition: background 0.12s;
 }
 
+/* Clickable rows jump the live cursor to that position. */
+.op-queue-item-clickable {
+  cursor: pointer;
+}
+
 .op-queue-item:hover {
   background: color-mix(in srgb, var(--ui-text, #e2e8f0) 6%, transparent);
 }
@@ -698,6 +811,33 @@
   display: flex;
   align-items: flex-end;
   gap: 8px;
+}
+
+/* Seek cluster sits left of the main transport. Smaller, muted — these are
+ * navigation shortcuts, not the primary play/step controls. */
+.op-transport-seek {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+}
+
+.op-transport-btn-seek {
+  padding: 6px 10px;
+  opacity: 0.85;
+}
+
+.op-transport-btn-seek .op-transport-glyph {
+  font-size: 13px;
+}
+
+.op-transport-btn-seek:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.op-transport-btn-seek:disabled:hover {
+  background: color-mix(in srgb, var(--ui-text, #e2e8f0) 5%, transparent);
+  border-color: color-mix(in srgb, var(--ui-border, #94a3b8) 30%, transparent);
 }
 
 .op-transport-btn {

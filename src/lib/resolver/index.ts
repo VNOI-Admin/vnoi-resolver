@@ -18,6 +18,8 @@ export {
   initSimState,
   makeReducer,
   precomputeFrom,
+  classifyHoldMs,
+  HOLD_MS,
   type SimAction,
   type SimState,
   type SimulationCtx
