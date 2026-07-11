@@ -1,4 +1,24 @@
-import type { InputData, InputSubmission } from './types';
+import type { AwardImageMap, InputData, InputSubmission } from './types';
+
+// Validate the award-image JSON ({ "<rank>": "<data: URL>" }) at the boundary
+// the same way parseInputData validates the data file, so a malformed map
+// fails on the splash form instead of surfacing as a broken image on the
+// projector mid-ceremony.
+export function parseAwardImageMap(raw: unknown): AwardImageMap {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    throw new Error('image JSON must be an object of { "<rank>": "<url>" }');
+  }
+  const out: AwardImageMap = {};
+  for (const [rank, value] of Object.entries(raw)) {
+    if (typeof value !== 'string') {
+      throw new Error(
+        `image for rank ${JSON.stringify(rank)} must be a string URL, got ${typeof value}`
+      );
+    }
+    out[rank] = value;
+  }
+  return out;
+}
 
 type RawSubmission = Omit<InputSubmission, 'time'> & { time: number | string };
 type RawInputData = Omit<InputData, 'submissions'> & {

@@ -1,5 +1,22 @@
 import { describe, expect, it } from 'vitest';
-import { parseInputData } from '../parse';
+import { parseInputData, parseAwardImageMap } from '../parse';
+
+describe('parseAwardImageMap', () => {
+  it('accepts a rank → url string map', () => {
+    const m = parseAwardImageMap({ '1': 'data:img/a', '2': 'data:img/b' });
+    expect(m).toEqual({ '1': 'data:img/a', '2': 'data:img/b' });
+  });
+
+  it('throws on non-object / array input', () => {
+    expect(() => parseAwardImageMap(['a'])).toThrow(/object/);
+    expect(() => parseAwardImageMap(null)).toThrow(/object/);
+    expect(() => parseAwardImageMap('x')).toThrow(/object/);
+  });
+
+  it('throws when any value is not a string', () => {
+    expect(() => parseAwardImageMap({ '1': 123 })).toThrow(/rank "1"/);
+  });
+});
 
 describe('parseInputData', () => {
   const baseShape = {

@@ -7,10 +7,14 @@ import React, {
   useRef,
   useState
 } from 'react';
-import queryString from 'query-string';
 import Select, { MultiValue } from 'react-select';
 
-import { InputData, AwardImageMap, parseInputData } from './resolver';
+import {
+  InputData,
+  AwardImageMap,
+  parseInputData,
+  parseAwardImageMap
+} from './resolver';
 import { readJsonFile, urlBasename } from './util/files';
 import { DEFAULT_FROZEN_TIME_MIN } from './util/urlConfig';
 
@@ -59,6 +63,9 @@ export function Loading({
   const [shareDataUrl, setShareDataUrl] = useState(dataUrl ?? '');
   const [shareImageUrl, setShareImageUrl] = useState(imageUrl ?? '');
   const [copyToast, setCopyToast] = useState<string | null>(null);
+  // Raw text so the field can be cleared and retyped; a controlled number
+  // input would coerce empty → 0 on every keystroke and trap the value at 0.
+  const [frozenTimeText, setFrozenTimeText] = useState(String(frozenTime));
 
   const generatedShareUrl = useMemo(() => {
     const params: Record<string, string> = {};
@@ -69,7 +76,7 @@ export function Loading({
     if (unofficialContestants.length > 0)
       params.unofficial = unofficialContestants.join(',');
     if (!hideUnofficialContestants) params.hideUnofficial = '0';
-    const search = queryString.stringify(params);
+    const search = new URLSearchParams(params).toString();
     const { origin, pathname } = window.location;
     return search ? `${origin}${pathname}?${search}` : `${origin}${pathname}`;
   }, [
@@ -120,7 +127,7 @@ export function Loading({
     async (file: File) => {
       setError(null);
       try {
-        const parsed = await readJsonFile(file, (raw) => raw as AwardImageMap);
+        const parsed = await readJsonFile(file, parseAwardImageMap);
         setImageData(parsed);
         setImageFileName(file.name);
       } catch (e) {
@@ -149,9 +156,9 @@ export function Loading({
       }
       if (imageUrl) {
         try {
-          const raw = (await (await fetch(imageUrl)).json()) as AwardImageMap;
+          const raw = await (await fetch(imageUrl)).json();
           if (cancelled) return;
-          setImageData(raw);
+          setImageData(parseAwardImageMap(raw));
           setImageFileName(urlBasename(imageUrl));
         } catch (e) {
           if (cancelled) return;
@@ -182,14 +189,18 @@ export function Loading({
     [loadImage]
   );
 
-  const handleFrozenTimeChange = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
-      const raw = (e.target as HTMLInputElement).value;
-      const n = parseInt(raw, 10);
-      setFrozenTime(Math.max(0, Number.isFinite(n) ? n : 0));
-    },
-    [setFrozenTime]
-  );
+  // Commit on blur: parse the raw text, clamp to >= 0, and fall back to the
+  // last committed value if it's empty/invalid (so a transient empty field
+  // never becomes a real 0). Blur alone is NOT enough — macOS Safari doesn't
+  // move focus off the input when a <button> is clicked (buttons aren't
+  // mouse-focusable in WebKit), so Run and "Generate share link" also call
+  // this explicitly before consuming frozenTime.
+  const commitFrozenTime = useCallback(() => {
+    const n = parseInt(frozenTimeText, 10);
+    const next = Number.isFinite(n) && n >= 0 ? n : frozenTime;
+    setFrozenTime(next);
+    setFrozenTimeText(String(next));
+  }, [frozenTimeText, frozenTime, setFrozenTime]);
 
   const handleSelectChange = useCallback(
     (selectedOptions: MultiValue<{ value: string; label: string }>) => {
@@ -206,8 +217,9 @@ export function Loading({
   );
 
   const handleSubmit = useCallback(() => {
+    commitFrozenTime();
     setLoading(false);
-  }, [setLoading]);
+  }, [commitFrozenTime, setLoading]);
 
   const usernames = useMemo(
     () =>
@@ -283,8 +295,10 @@ export function Loading({
         <input
           id="frozen-input"
           type="number"
-          value={frozenTime}
-          onChange={handleFrozenTimeChange}
+          min={0}
+          value={frozenTimeText}
+          onChange={(e) => setFrozenTimeText(e.target.value)}
+          onBlur={commitFrozenTime}
         />
       </div>
       <div className="form-group">
@@ -315,7 +329,10 @@ export function Loading({
         <button
           type="button"
           className="secondary"
-          onClick={() => setShowShareModal(true)}
+          onClick={() => {
+            commitFrozenTime();
+            setShowShareModal(true);
+          }}
         >
           Generate share link
         </button>
@@ -342,6 +359,12 @@ export function Loading({
               your own server first. The link also captures ceremony settings
               (frozen time, unofficial contestants, hide flag).
             </p>
+            {dataFileName && !shareDataUrl && (
+              <div className="error-toast" role="alert">
+                You loaded <strong>{dataFileName}</strong> from disk — paste its
+                hosted URL above, or the share link won&apos;t include any data.
+              </div>
+            )}
             <label className="share-field">
               <span>Data URL</span>
               <input

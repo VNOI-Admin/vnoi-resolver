@@ -25,6 +25,7 @@ import { StatusStrip } from './StatusStrip';
 import { NowPane, NextPane, QueuePane } from './Panes';
 import { Timeline, Transport, type SeekControls } from './BottomBand';
 import { buildLookupCtx, type LookupCtx } from './format';
+import { nextWake, type WakeState } from './scheduler';
 import {
   nextAwardCursor,
   prevAwardCursor,
@@ -90,6 +91,7 @@ export function OperatorConsole({
     totalEvents,
     events,
     eventHoldMs,
+    eventClass,
     peekAt,
     pendingSubmissionsAt,
     projectRankAfter,
@@ -204,13 +206,13 @@ export function OperatorConsole({
     if (t !== null) jumpTo(t);
   }, [events, cursor, jumpTo]);
   const jumpNextMove = useCallback(() => {
-    const t = nextMoveCursor(eventHoldMs, cursor);
+    const t = nextMoveCursor(eventClass, cursor);
     if (t !== null) jumpTo(t);
-  }, [eventHoldMs, cursor, jumpTo]);
+  }, [eventClass, cursor, jumpTo]);
   const jumpPrevMove = useCallback(() => {
-    const t = prevMoveCursor(eventHoldMs, cursor);
+    const t = prevMoveCursor(eventClass, cursor);
     if (t !== null) jumpTo(t);
-  }, [eventHoldMs, cursor, jumpTo]);
+  }, [eventClass, cursor, jumpTo]);
   const jumpToStart = useCallback(() => jumpTo(0), [jumpTo]);
   const jumpToEnd = useCallback(
     () => jumpTo(totalEvents),
@@ -225,12 +227,12 @@ export function OperatorConsole({
       nextMove: jumpNextMove,
       canPrevAward: prevAwardCursor(events, cursor) !== null,
       canNextAward: nextAwardCursor(events, cursor) !== null,
-      canPrevMove: prevMoveCursor(eventHoldMs, cursor) !== null,
-      canNextMove: nextMoveCursor(eventHoldMs, cursor) !== null
+      canPrevMove: prevMoveCursor(eventClass, cursor) !== null,
+      canNextMove: nextMoveCursor(eventClass, cursor) !== null
     }),
     [
       events,
-      eventHoldMs,
+      eventClass,
       cursor,
       jumpPrevAward,
       jumpNextAward,
@@ -239,27 +241,32 @@ export function OperatorConsole({
     ]
   );
 
-  // 1–9 are double-gated: live cursor must be on a mark_problem with 2+
-  // pendings AND the index must be in range. Without this `1` outside the
-  // chooser silently advances with `choice=0` (default), `2`–`9` no-op —
-  // both are footguns. The kbd chips in the chooser mute correspondingly.
+  // 1–9 are gated by `chooserKeysEnabled`: useKeyPress doesn't attach the
+  // listener unless the live cursor is on a mark_problem with 2+ pendings AND
+  // no queue/timeline preview is up. The preview gate mirrors the chooser-row
+  // click (onPick is undefined while previewing) so a number key can't commit
+  // against the LIVE chooser while the operator reads a previewed one. The
+  // handler itself only bounds the per-index pick — the enable flag is shared
+  // by all nine keys, so `9` must still no-op when fewer than 9 submissions pend.
   const shortcutsEnabled = !showHelp;
+  const isPreviewing = hoverCursor !== null && hoverCursor !== cursor;
   const chooserActive = livePendingCount >= 2;
+  const chooserKeysEnabled = shortcutsEnabled && chooserActive && !isPreviewing;
   const chooserKey = (idx: number) => () => {
-    if (!chooserActive || idx >= livePendingCount) return;
+    if (idx >= livePendingCount) return;
     manualStep(idx);
   };
   useKeyPress('ArrowLeft', manualRollback, shortcutsEnabled);
   useKeyPress('ArrowRight', manualStep, shortcutsEnabled);
-  useKeyPress('1', chooserKey(0), shortcutsEnabled && chooserActive);
-  useKeyPress('2', chooserKey(1), shortcutsEnabled && chooserActive);
-  useKeyPress('3', chooserKey(2), shortcutsEnabled && chooserActive);
-  useKeyPress('4', chooserKey(3), shortcutsEnabled && chooserActive);
-  useKeyPress('5', chooserKey(4), shortcutsEnabled && chooserActive);
-  useKeyPress('6', chooserKey(5), shortcutsEnabled && chooserActive);
-  useKeyPress('7', chooserKey(6), shortcutsEnabled && chooserActive);
-  useKeyPress('8', chooserKey(7), shortcutsEnabled && chooserActive);
-  useKeyPress('9', chooserKey(8), shortcutsEnabled && chooserActive);
+  useKeyPress('1', chooserKey(0), chooserKeysEnabled);
+  useKeyPress('2', chooserKey(1), chooserKeysEnabled);
+  useKeyPress('3', chooserKey(2), chooserKeysEnabled);
+  useKeyPress('4', chooserKey(3), chooserKeysEnabled);
+  useKeyPress('5', chooserKey(4), chooserKeysEnabled);
+  useKeyPress('6', chooserKey(5), chooserKeysEnabled);
+  useKeyPress('7', chooserKey(6), chooserKeysEnabled);
+  useKeyPress('8', chooserKey(7), chooserKeysEnabled);
+  useKeyPress('9', chooserKey(8), chooserKeysEnabled);
   useKeyPress(' ', () => setPlaying((p) => !p), shortcutsEnabled);
   useKeyPress('c', () => setShowControls((s) => !s), shortcutsEnabled);
   // Seek navigation. ] [ for awards, . , for rank-changes (the unshifted
@@ -285,33 +292,31 @@ export function OperatorConsole({
   useEffect(() => {
     stepRef.current = step;
   }, [step]);
-  // Absolute-time autoplay scheduler. Per-event hold times (SOLVED_MOVE
-  // long, FAILED short, etc.) are read from eventHoldMs[cursor-1] — the
-  // hold AFTER the event whose result is currently on screen. The
-  // nextWakeMsRef accumulates the target absolute time so per-iteration
-  // jitter (React commit overhead, browser timer slop) doesn't compound
-  // across a long reveal — each sleep is `target - now`, not a fresh
-  // `delay` chained on top of the previous late firing.
-  //
-  // Reset to null on pause / showHelp / not-playing; the effect re-anchors
-  // to performance.now() on resume.
-  const nextWakeMsRef = useRef<number | null>(null);
+  // Absolute-time autoplay scheduler (pure target math in nextWake; see there
+  // for why the target only advances on a cursor move). Reset to null on
+  // pause / help so the next resume re-anchors.
+  const wakeRef = useRef<WakeState | null>(null);
+  // The queued step re-checks this before firing. At high speed the
+  // award auto-pause's setPlaying(false) re-render can lag the
+  // already-scheduled next step, which would step OFF the award before the
+  // effect cleanup clears the timer — flashing the award past instead of
+  // holding on it. Guarding on the live ref makes a pause win that race.
+  const playingRef = useRef(playing);
+  playingRef.current = playing;
   useEffect(() => {
     if (!playing || showHelp) {
-      nextWakeMsRef.current = null;
+      wakeRef.current = null;
       return;
     }
-    if (nextWakeMsRef.current === null) {
-      nextWakeMsRef.current = performance.now();
-    }
-    // First fire after resume: no prior event to hold for. Otherwise hold
-    // for the duration classified for events[cursor - 1] — the event whose
-    // aftermath the audience is currently looking at.
-    const prevIdx = cursor - 1;
-    const baseHoldMs = prevIdx >= 0 ? (eventHoldMs[prevIdx] ?? 1000) : 0;
-    nextWakeMsRef.current += baseHoldMs / speed;
-    const sleepMs = Math.max(0, nextWakeMsRef.current - performance.now());
-    const id = setTimeout(() => stepRef.current(), sleepMs);
+    const now = performance.now();
+    const next = nextWake(wakeRef.current, cursor, eventHoldMs, speed, now);
+    wakeRef.current = next;
+    const id = setTimeout(
+      () => {
+        if (playingRef.current) stepRef.current();
+      },
+      Math.max(0, next.wakeMs - now)
+    );
     return () => clearTimeout(id);
   }, [playing, showHelp, speed, cursor, eventHoldMs]);
 
@@ -330,6 +335,9 @@ export function OperatorConsole({
   useEffect(() => {
     if (imageSrc !== null && imageSrc !== prevImageSrcRef.current) {
       if (!audienceConnected) fireAwardConfetti();
+      // Stop a queued autoplay step synchronously (not just via the
+      // setPlaying re-render) so it can't overshoot the award at high speed.
+      playingRef.current = false;
       setPlaying((p) => (p ? false : p));
     }
     prevImageSrcRef.current = imageSrc;

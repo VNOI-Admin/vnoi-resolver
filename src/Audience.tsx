@@ -1,19 +1,17 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useReducer, useRef } from 'react';
 
 import { useKeyPress } from './hooks';
 import { applyHideUnofficials, useResolver } from './resolver';
-import {
-  THEMES,
-  ThemeProvider,
-  loadThemeKey,
-  type ThemeKey
-} from './canvas/theme';
+import { THEMES, ThemeProvider, loadThemeKey } from './canvas/theme';
 import { useThemeCssVars } from './canvas/useThemeCssVars';
 import { LiveScoreboard } from './canvas/LiveScoreboard';
 import {
   ALIVE_PING_MS,
+  applySyncMessage,
   createSyncChannel,
   HELLO_RETRY_MS,
+  initialAudienceSyncState,
+  type AudienceSyncState,
   type InitPayload,
   type SyncMessage
 } from './sync';
@@ -22,47 +20,36 @@ import { toggleFullscreen } from './util/fullscreen';
 import { fireAwardConfetti } from './util/confetti';
 import { ErrorBoundary } from './ErrorBoundary';
 
-/**
- * Audience root. Owns ALL sync state (init payload, theme, action log) so
- * that appends arriving before AudienceLive's listener would have mounted
- * are still captured — the previous design lost them and stuck the audience
- * N events behind the operator.
- */
-export function Audience() {
-  const channelRef = useRef<BroadcastChannel | null>(null);
-  const [init, setInit] = useState<InitPayload | null>(null);
-  // Both windows share localStorage; this guess avoids a flash of the
-  // default-theme background before init arrives.
-  const [themeKey, setThemeKey] = useState<ThemeKey>(loadThemeKey);
-  const [speed, setSpeed] = useState(1);
-  // Bumps on every init. Drives AudienceLive's remount key so a fresh init
-  // resets useResolver AND the appliedCount ref inside the replay engine.
-  const [ceremonyId, setCeremonyId] = useState(0);
-  // Operator's own ceremony id, tagged onto every message. We adopt it on
-  // init and use it to drop messages from a STALE ceremony — without this,
-  // an append broadcast that races a dataset change (broadcastAction is
-  // synchronous; unsolicited init is useEffect-scheduled, so an append can
-  // be queued after dataVersion bumps but before its init fires) would
-  // apply against the wrong ceremony and possibly trip the events.ts
-  // mark_problem gate.
-  const operatorCeremonyIdRef = useRef<number | null>(null);
-  const [actionLog, setActionLog] = useState<readonly SimAction[]>([]);
+// Local reset for the ErrorBoundary re-handshake: wipe the ceremony and
+// replay log but keep the theme/speed guess, then the hello loop restarts.
+type SyncEvent = SyncMessage | { kind: 'reset' };
+function syncReducer(
+  state: AudienceSyncState,
+  ev: SyncEvent
+): AudienceSyncState {
+  if (ev.kind === 'reset') {
+    return { ...state, operatorCeremonyId: null, init: null, actionLog: [] };
+  }
+  return applySyncMessage(state, ev);
+}
 
-  // Re-init handshake. Triggered both on mount and on ErrorBoundary reset
-  // — wiped to clean state, hello loop restarted so the operator answers
-  // with a fresh init.
+export function Audience() {
+  const [sync, dispatch] = useReducer(syncReducer, undefined, () =>
+    initialAudienceSyncState(loadThemeKey())
+  );
+  const { init, themeKey, speed, actionLog, localCeremonyId } = sync;
+
+  // Re-init handshake, fired on mount and on ErrorBoundary reset: restart the
+  // hello loop so the operator answers with a fresh init.
   const helloRestartRef = useRef<() => void>(() => {});
   const handleErrorReset = useCallback(() => {
-    setInit(null);
-    setActionLog([]);
-    operatorCeremonyIdRef.current = null;
+    dispatch({ kind: 'reset' });
     helloRestartRef.current();
   }, []);
 
   useEffect(() => {
     const ch = createSyncChannel();
     if (!ch) return;
-    channelRef.current = ch;
 
     let helloInterval: ReturnType<typeof setInterval> | null = null;
     const startHello = () => {
@@ -81,29 +68,8 @@ export function Audience() {
     helloRestartRef.current = startHello;
 
     const onMessage = (e: MessageEvent<SyncMessage>) => {
-      const msg = e.data;
-      if (msg.kind === 'init') {
-        // Adopt the operator's id; subsequent messages are filtered against it.
-        operatorCeremonyIdRef.current = msg.ceremonyId;
-        setCeremonyId((id) => id + 1);
-        setInit(msg.payload);
-        setThemeKey(msg.payload.themeKey);
-        setSpeed(msg.payload.speed);
-        // Direct value resets the log; appends batched in the same commit
-        // (via the updater form below) compose on top of the reset value.
-        setActionLog(msg.payload.actionLog.slice());
-        stopHello();
-        return;
-      }
-      // hello / alive carry no ceremonyId; the rest are dropped on
-      // mismatch (stale operator session, race after dataset change).
-      if (msg.kind === 'hello' || msg.kind === 'alive') return;
-      if (msg.ceremonyId !== operatorCeremonyIdRef.current) return;
-      if (msg.kind === 'theme') setThemeKey(msg.themeKey);
-      else if (msg.kind === 'speed') setSpeed(msg.speed);
-      else if (msg.kind === 'append') {
-        setActionLog((log) => [...log, msg.action]);
-      }
+      dispatch(e.data);
+      if (e.data.kind === 'init') stopHello();
     };
     ch.addEventListener('message', onMessage);
 
@@ -123,7 +89,6 @@ export function Audience() {
       ch.removeEventListener('message', onMessage);
       document.removeEventListener('visibilitychange', onVisibility);
       ch.close();
-      channelRef.current = null;
       stopHello();
       clearInterval(aliveInterval);
     };
@@ -183,19 +148,15 @@ export function Audience() {
     <ThemeProvider theme={THEMES[themeKey]}>
       <div className="App">
         {init ? (
-          // ErrorBoundary catches any throw out of the replay path or Pixi
-          // tree (a malformed action, a transient @pixi/react glitch).
-          // The defensive try/catch in AudienceLive's replay effect should
-          // catch most of these BEFORE they propagate; the boundary is the
-          // belt-and-suspenders cover that re-hands-hakes instead of leaving
-          // a white projector.
-          <ErrorBoundary onReset={handleErrorReset}>
-            <AudienceLive
-              key={ceremonyId}
-              init={init}
-              actionLog={actionLog}
-              speed={speed}
-            />
+          // ErrorBoundary catches any throw out of the replay render or the
+          // Pixi tree (malformed reducer state, a transient @pixi/react
+          // glitch) and re-handshakes — automatically, after a short delay,
+          // plus a manual "Retry now". The ceremony key sits ON the boundary,
+          // not inside it: a fresh init must replace the boundary itself,
+          // otherwise an error state would survive the new ceremony and the
+          // card could only ever be cleared by hand at the projector.
+          <ErrorBoundary key={localCeremonyId} onReset={handleErrorReset}>
+            <AudienceLive init={init} actionLog={actionLog} speed={speed} />
           </ErrorBoundary>
         ) : (
           <div className="audience-waiting">
@@ -227,12 +188,14 @@ export function Audience() {
 /**
  * Pure replay engine. appliedCount tracks how many actionLog entries have
  * been dispatched; the effect runs only the new tail on each render. Remount
- * (via key={ceremonyId}) resets appliedCount to zero for a fresh ceremony.
+ * (via the ceremony key on the ErrorBoundary) resets appliedCount to zero
+ * for a fresh ceremony.
  *
- * Replay is wrapped in a per-action try/catch so a single malformed action
- * doesn't crash the audience window — the offending action is skipped, the
- * error is logged, and replay continues. Defense in depth with the outer
- * ErrorBoundary.
+ * There is deliberately NO try/catch around the dispatches: useReducer runs
+ * the reducer during the NEXT render, not inside dispatch, so a wrapper here
+ * could never catch anything. Malformed actions are neutralised inside the
+ * reducer instead (out-of-range choices and non-integer seek cursors no-op),
+ * and anything that still throws in render is the ErrorBoundary's job.
  */
 function AudienceLive({
   init,
@@ -269,45 +232,25 @@ function AudienceLive({
     frozenTime: init.frozenTime * 60
   });
 
-  const stepRef = useRef(step);
-  const rollbackRef = useRef(rollback);
-  const seekRef = useRef(seek);
-  useEffect(() => {
-    stepRef.current = step;
-  }, [step]);
-  useEffect(() => {
-    rollbackRef.current = rollback;
-  }, [rollback]);
-  useEffect(() => {
-    seekRef.current = seek;
-  }, [seek]);
-
+  // step/rollback/seek are dispatch-wrappers with empty dep arrays
+  // (resolver.ts), so their identities are stable for the life of this
+  // component — safe in the dep array, and they never retrigger the effect.
   const appliedCount = useRef(0);
   useEffect(() => {
     while (appliedCount.current < actionLog.length) {
       const action = actionLog[appliedCount.current]!;
-      try {
-        // Explicit per-type dispatch. Unknown action types (e.g. a NEWER
-        // operator build broadcasting an action this audience doesn't know)
-        // are IGNORED rather than falling through to rollback — a stale
-        // audience must never rollback-storm on an unrecognised action,
-        // which is exactly what the old `else → rollback` fallback did when
-        // `seek` was introduced.
-        if (action.type === 'step') stepRef.current(action.choice);
-        else if (action.type === 'rollback') rollbackRef.current();
-        else if (action.type === 'seek') seekRef.current(action.cursor);
-      } catch (err) {
-        console.warn(
-          '[Audience] applyEvent failed at index',
-          appliedCount.current,
-          'action:',
-          action,
-          err
-        );
-      }
+      // Explicit per-type dispatch. Unknown action types (e.g. a NEWER
+      // operator build broadcasting an action this audience doesn't know)
+      // are IGNORED rather than falling through to rollback — a stale
+      // audience must never rollback-storm on an unrecognised action,
+      // which is exactly what the old `else → rollback` fallback did when
+      // `seek` was introduced.
+      if (action.type === 'step') step(action.choice);
+      else if (action.type === 'rollback') rollback();
+      else if (action.type === 'seek') seek(action.cursor);
       appliedCount.current++;
     }
-  }, [actionLog]);
+  }, [actionLog, step, rollback, seek]);
 
   // Prev-ref dedupe also covers the initial-replay catch-up burst — all
   // intermediate imageSrc values collapse into one commit, so only the

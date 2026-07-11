@@ -46,18 +46,23 @@ export const HOLD_MS = {
   DEFAULT: 1000
 } as const;
 
+// The KIND of an event's aftermath — the source of truth for "what happened",
+// kept separate from HOLD_MS (which is just how long to pause on it). Jump-nav
+// matches on this, not on a duration value, so retuning HOLD_MS can't silently
+// redirect "jump to next rank change".
+export type HoldClass = keyof typeof HOLD_MS;
+
 export type SimState = {
-  base: InternalState;
   cursor: number;
   events: ResolverEvent[];
-  // Invariant: states.length === events.length + 1 === eventHoldMs.length + 1.
-  // states[i] is the state *before* applying events[i]; states[cursor] is
-  // the visible state now.
+  // Invariant: states.length === events.length + 1 === eventHoldMs.length + 1
+  // === eventClass.length + 1. states[i] is the state *before* applying
+  // events[i]; states[cursor] is the visible state now.
   states: InternalState[];
-  // eventHoldMs[i] is the autoplay hold time AFTER applying events[i] —
-  // the duration the audience spends looking at the dramatic result of
-  // events[i] before events[i+1] fires. Indexed in lockstep with events[].
+  // eventHoldMs[i] / eventClass[i] describe events[i]'s aftermath, in lockstep
+  // with events[]: how long autoplay pauses, and what kind of moment it was.
   eventHoldMs: number[];
+  eventClass: HoldClass[];
 };
 
 export type SimAction =
@@ -69,44 +74,37 @@ export type SimAction =
   // audience exactly in sync, vs. flooding N step/rollback messages.
   | { type: 'seek'; cursor: number };
 
-// Hard cap to keep a malformed dataset from looping forever. Real datasets
-// terminate in ~1k events; this leaves 3 orders of magnitude of slack.
-export const PRECOMPUTE_GUARD = 1_000_000;
-
 function rankByUserId(ranking: UserRow[]): Map<number, string> {
   const m = new Map<number, string>();
   for (const r of ranking) m.set(r.userId, r.rank);
   return m;
 }
 
-// Classify a single event's aftermath into a hold duration.
-// `beforeRanking` is the ranking computed for the pre-event state;
-// `afterRanking` is for the post-event state. Both are required to detect
-// the SOLVED_MOVE / SOLVED_STAY distinction.
-export function classifyHoldMs(
+// Classify a single event's aftermath. `beforeRanking` / `afterRanking` are
+// the rankings of the pre- and post-event states, both needed for the
+// SOLVED_MOVE (rank shifted) vs SOLVED_STAY (didn't) distinction.
+export function classifyHoldClass(
   event: ResolverEvent,
   beforeRanking: UserRow[],
   afterRanking: UserRow[],
   ctx: SimulationCtx
-): number {
+): HoldClass {
   switch (event.kind) {
     case 'mark_user':
-      return HOLD_MS.SELECT_TEAM;
+      return 'SELECT_TEAM';
     case 'mark_problem':
-      return HOLD_MS.SELECT_PROBLEM;
+      return 'SELECT_PROBLEM';
     case 'resolve': {
       const sub = ctx.submissionById[event.submissionId];
-      if (!sub || sub.points === 0) return HOLD_MS.FAILED;
+      if (!sub || sub.points === 0) return 'FAILED';
       const beforeRank = rankByUserId(beforeRanking).get(event.userId);
       const afterRank = rankByUserId(afterRanking).get(event.userId);
-      return beforeRank !== afterRank
-        ? HOLD_MS.SOLVED_MOVE
-        : HOLD_MS.SOLVED_STAY;
+      return beforeRank !== afterRank ? 'SOLVED_MOVE' : 'SOLVED_STAY';
     }
     case 'show_award':
     case 'hide_award':
     case 'end':
-      return HOLD_MS.DEFAULT;
+      return 'DEFAULT';
   }
 }
 
@@ -117,45 +115,57 @@ export function precomputeFrom(
   events: ResolverEvent[];
   states: InternalState[];
   eventHoldMs: number[];
+  eventClass: HoldClass[];
 } {
   const events: ResolverEvent[] = [];
   const states: InternalState[] = [startState];
   const eventHoldMs: number[] = [];
+  const eventClass: HoldClass[] = [];
   let state = startState;
   // Roll ranking forward across iterations: prevRanking starts as
   // rankUsers(state[0]) and afterRanking gets reused as the next iter's
   // prevRanking. Saves a redundant rankUsers per event.
   let prevRanking = rankUsers(state, ctx.unofficialContestants);
+
+  // Termination is structural (computeNextEvent returns null / `end`); this
+  // guard only fires on a malformed dataset that cycles. Bound it to the
+  // input size — at most one mark_user per row plus mark_problem+resolve per
+  // pending submission plus a couple per award — so a cycle trips in
+  // thousands of iterations, not the millions it takes to OOM the tab.
+  const guard =
+    (Object.keys(startState.users).length +
+      Object.keys(ctx.submissionById).length) *
+      4 +
+    1000;
   let i = 0;
-  for (; i < PRECOMPUTE_GUARD; i++) {
+  for (; i < guard; i++) {
     const next = computeNextEvent(state, prevRanking, ctx);
     if (!next) break;
     events.push(next);
     state = applyEvent(state, next, ctx);
     states.push(state);
     const afterRanking = rankUsers(state, ctx.unofficialContestants);
-    eventHoldMs.push(classifyHoldMs(next, prevRanking, afterRanking, ctx));
+    const cls = classifyHoldClass(next, prevRanking, afterRanking, ctx);
+    eventHoldMs.push(HOLD_MS[cls]);
+    eventClass.push(cls);
     prevRanking = afterRanking;
     if (next.kind === 'end') break;
   }
-  // Diagnostic if we hit the cap without emitting `end` — almost certainly
-  // a malformed dataset producing an infinite event loop. Without this
-  // signal the operator UI would silently show a truncated reveal.
-  if (i === PRECOMPUTE_GUARD && events[events.length - 1]?.kind !== 'end') {
+  if (i === guard && events[events.length - 1]?.kind !== 'end') {
     console.error(
-      `precomputeFrom: hit PRECOMPUTE_GUARD (${PRECOMPUTE_GUARD}) without ` +
-        `terminating; reveal log is truncated. Likely a malformed dataset.`
+      `precomputeFrom: emitted ${guard} events without terminating; reveal ` +
+        `log is truncated. Likely a malformed dataset with an event cycle.`
     );
   }
-  return { events, states, eventHoldMs };
+  return { events, states, eventHoldMs, eventClass };
 }
 
 export function initSimState(
   base: InternalState,
   ctx: SimulationCtx
 ): SimState {
-  const { events, states, eventHoldMs } = precomputeFrom(base, ctx);
-  return { base, cursor: 0, events, states, eventHoldMs };
+  const { events, states, eventHoldMs, eventClass } = precomputeFrom(base, ctx);
+  return { cursor: 0, events, states, eventHoldMs, eventClass };
 }
 
 export function makeReducer(ctx: SimulationCtx) {
@@ -189,7 +199,7 @@ export function makeReducer(ctx: SimulationCtx) {
 
       const newState = applyEvent(currentState, newEvent, ctx);
       const afterRanking = rankUsers(newState, ctx.unofficialContestants);
-      const newHoldMs = classifyHoldMs(
+      const newClass = classifyHoldClass(
         newEvent,
         beforeRanking,
         afterRanking,
@@ -197,7 +207,6 @@ export function makeReducer(ctx: SimulationCtx) {
       );
       const tail = precomputeFrom(newState, ctx);
       return {
-        base: state.base,
         events: [
           ...state.events.slice(0, state.cursor),
           newEvent,
@@ -210,8 +219,13 @@ export function makeReducer(ctx: SimulationCtx) {
         ],
         eventHoldMs: [
           ...state.eventHoldMs.slice(0, state.cursor),
-          newHoldMs,
+          HOLD_MS[newClass],
           ...tail.eventHoldMs
+        ],
+        eventClass: [
+          ...state.eventClass.slice(0, state.cursor),
+          newClass,
+          ...tail.eventClass
         ],
         cursor: state.cursor + 1
       };
@@ -219,7 +233,12 @@ export function makeReducer(ctx: SimulationCtx) {
 
     if (action.type === 'seek') {
       // O(1) absolute move, clamped. Same-cursor seeks return the same
-      // reference so callers/memo stay stable.
+      // reference so callers/memo stay stable. Integer-guarded because the
+      // action can arrive over the BroadcastChannel: a NaN or fractional
+      // cursor passes a bare min/max clamp (Math.min(len, NaN) === NaN),
+      // commits into state, and then every states[cursor] read crashes the
+      // window on each render.
+      if (!Number.isInteger(action.cursor)) return state;
       const target = Math.max(0, Math.min(state.events.length, action.cursor));
       if (target === state.cursor) return state;
       return { ...state, cursor: target };

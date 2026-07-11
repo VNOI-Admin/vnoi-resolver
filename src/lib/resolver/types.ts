@@ -47,7 +47,6 @@ export type InternalUser = InputUser & {
   status: StatusByProblemId;
   scoreClass: ScoreClassByProblemId;
   lastAlteringScoreSubmissionIdByProblemId: { [problemId: number]: number };
-  lastAlteringScoreSubmissionId: number;
   submissionIdsByProblemId: { [problemId: number]: number[] };
   pendingSubmissionIds: number[];
   penalty: number;
@@ -59,6 +58,10 @@ export type InternalState = {
   currentRowIndex: number;
   markedUserId: number;
   markedProblemId: number;
+  // The submission mark_problem validated and resolve consumes. -1 when no
+  // problem is marked. markedProblemId still drives the pill highlight; this
+  // pins the exact id so resolve never has to re-match by problemId.
+  markedSubmissionId: number;
   users: { [userId: number]: InternalUser };
 };
 

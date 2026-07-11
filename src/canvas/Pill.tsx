@@ -14,8 +14,8 @@ import { ProblemAttemptStatus } from '../lib/resolver';
 import { TEXT, useTheme } from './theme';
 import { PILL_HEIGHT, PILL_Y } from './layout';
 import { useAnimationJob } from './animation';
-import { easeOutCubic } from './easing';
 import { useAnimationSpeed } from './animationSpeed';
+import { tweenColorNow } from './colorTween';
 
 const COLOR_TWEEN_MS_BASE = 500;
 // Rounded rect (not stadium) so adjacent pills read as a tight band instead
@@ -28,20 +28,6 @@ const SCORE_LABEL_STYLE = {
   fontWeight: 'bold' as const,
   fill: 0xffffff
 };
-
-function lerpColor(a: number, b: number, t: number): number {
-  const ar = (a >> 16) & 0xff;
-  const ag = (a >> 8) & 0xff;
-  const ab = a & 0xff;
-  const br = (b >> 16) & 0xff;
-  const bg = (b >> 8) & 0xff;
-  const bb = b & 0xff;
-  return (
-    (Math.round(ar + (br - ar) * t) << 16) |
-    (Math.round(ag + (bg - ag) * t) << 8) |
-    Math.round(ab + (bb - ab) * t)
-  );
-}
 
 function PillInner({
   x,
@@ -125,10 +111,13 @@ function PillInner({
     if (g) {
       const { fromColor, toColor, start } = colorTween.current;
       if (fromColor !== toColor) {
-        const t = Math.min(1, (performance.now() - start) / COLOR_TWEEN_MS);
-        const c = lerpColor(fromColor, toColor, easeOutCubic(t));
-        repaintPill(g, c);
-        if (t >= 1) colorTween.current.fromColor = toColor;
+        const now = performance.now();
+        repaintPill(
+          g,
+          tweenColorNow(colorTween.current, targetColor, COLOR_TWEEN_MS, now)
+        );
+        if (now - start >= COLOR_TWEEN_MS)
+          colorTween.current.fromColor = toColor;
         else colorActive = true;
       }
     }
@@ -138,7 +127,15 @@ function PillInner({
     }
   });
 
+  // The snapshot below must use the duration the tick was painting with
+  // until this render (the prev ref), not the new one: on a mid-flight
+  // speed change the new duration clamps in-flight progress to 1, so
+  // snapshotting with it would capture the FINAL colour and the pill would
+  // snap instead of finishing its fade.
+  const prevColorTweenMs = useRef(COLOR_TWEEN_MS);
   useEffect(() => {
+    const shownMs = prevColorTweenMs.current;
+    prevColorTweenMs.current = COLOR_TWEEN_MS;
     if (!colorTween.current.initialized) {
       colorTween.current = {
         fromColor: targetColor,
@@ -152,14 +149,14 @@ function PillInner({
     const inFlight =
       colorTween.current.fromColor !== colorTween.current.toColor;
     if (targetUnchanged && !inFlight) return;
-    const t = Math.min(
-      1,
-      (performance.now() - colorTween.current.start) / COLOR_TWEEN_MS
-    );
-    const currentVisual = lerpColor(
-      colorTween.current.fromColor,
+    // Snapshot the colour shown right now as the new tween's start. Pass the
+    // current toColor (not the new target) so a settled tween yields its
+    // resting colour rather than jumping to the new target.
+    const currentVisual = tweenColorNow(
+      colorTween.current,
       colorTween.current.toColor,
-      easeOutCubic(t)
+      shownMs,
+      performance.now()
     );
     colorTween.current = {
       fromColor: currentVisual,
@@ -196,15 +193,23 @@ function PillInner({
     [x, w, accentColor]
   );
 
-  // Static paint when not tweening. Pixi calls this when the draw prop
-  // identity changes (i.e. on prop changes affecting shape/color).
+  // Pixi calls this when the draw prop identity changes (geometry/color prop
+  // change, e.g. a resize). It paints through tweenColorNow — the SAME function
+  // the tick uses — so a redraw mid-tween shows the live colour, never the
+  // tween's start colour for a frame.
   const drawPill = useCallback(
     (g: PixiGraphics) => {
-      const { fromColor, toColor } = colorTween.current;
-      const color = fromColor === toColor ? targetColor : fromColor;
-      repaintPill(g, color);
+      repaintPill(
+        g,
+        tweenColorNow(
+          colorTween.current,
+          targetColor,
+          COLOR_TWEEN_MS,
+          performance.now()
+        )
+      );
     },
-    [repaintPill, targetColor]
+    [repaintPill, targetColor, COLOR_TWEEN_MS]
   );
 
   const label = isUnattempted

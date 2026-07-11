@@ -17,10 +17,9 @@ import type {
   InputData,
   PointByProblemId,
   SimState,
-  SimulationCtx,
   SubmissionById
 } from '..';
-import { HOLD_MS, classifyHoldMs } from '../simulation';
+import { HOLD_MS, classifyHoldClass, type SimulationCtx } from '../simulation';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const DATA_PATH = join(HERE, '../../../../public/vnoicup24/data.json');
@@ -327,6 +326,9 @@ describe('simulation reducer', () => {
 });
 
 describe('classifyHoldMs / eventHoldMs', () => {
+  const classifyHoldMs = (...args: Parameters<typeof classifyHoldClass>) =>
+    HOLD_MS[classifyHoldClass(...args)];
+
   it('mark_user → SELECT_TEAM', () => {
     const ctx = buildCtx();
     expect(
@@ -452,6 +454,19 @@ describe('classifyHoldMs / eventHoldMs', () => {
       expect(Number.isFinite(ms)).toBe(true);
       expect(ms).toBeGreaterThan(0);
     }
+  });
+
+  it('eventClass tags every event and its duration matches HOLD_MS[class]', () => {
+    const sim = buildInitial();
+    expect(sim.eventClass.length).toBe(sim.events.length);
+    sim.eventClass.forEach((cls, i) => {
+      expect(HOLD_MS[cls]).toBe(sim.eventHoldMs[i]);
+    });
+    // mark_user events are SELECT_TEAM; rank-movers exist in this dataset.
+    sim.events.forEach((e, i) => {
+      if (e.kind === 'mark_user') expect(sim.eventClass[i]).toBe('SELECT_TEAM');
+    });
+    expect(sim.eventClass).toContain('SOLVED_MOVE');
   });
 
   it('divergence preserves eventHoldMs prefix and re-classifies the tail', () => {

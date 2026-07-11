@@ -1,5 +1,3 @@
-import queryString from 'query-string';
-
 // VNOI Cup standard reveal window: scoreboard freezes 4h before contest end.
 export const DEFAULT_FROZEN_TIME_MIN = 240;
 
@@ -17,37 +15,18 @@ export type UrlConfig = {
 };
 
 export function readUrlConfig(): UrlConfig {
-  const p = queryString.parse(window.location.search);
-  // query-string returns string for ?k=v, string[] for ?k=v1&k=v2, null
-  // for ?k. first/all normalise both shapes.
-  const first = (
-    v: string | (string | null)[] | null | undefined
-  ): string | null => {
-    if (typeof v === 'string') return v;
-    if (Array.isArray(v)) {
-      const found = v.find((x): x is string => typeof x === 'string');
-      return found ?? null;
-    }
-    return null;
-  };
-  const all = (v: string | (string | null)[] | null | undefined): string[] => {
-    if (typeof v === 'string') return v.split(',').filter(Boolean);
-    if (Array.isArray(v)) {
-      return v.flatMap((x) =>
-        typeof x === 'string' ? x.split(',').filter(Boolean) : []
-      );
-    }
-    return [];
-  };
-
-  const ftStr = first(p.frozenTime);
+  const p = new URLSearchParams(window.location.search);
+  const ftStr = p.get('frozenTime');
   const ft = ftStr !== null ? parseInt(ftStr, 10) : NaN;
   return {
     frozenTime: Number.isFinite(ft) && ft >= 0 ? ft : DEFAULT_FROZEN_TIME_MIN,
-    unofficial: all(p.unofficial),
-    hideUnofficial: first(p.hideUnofficial) !== '0',
-    dataUrl: first(p.data),
-    imageUrl: first(p.image)
+    // getAll() collects repeated ?unofficial=…; split() also accepts a CSV value.
+    unofficial: p
+      .getAll('unofficial')
+      .flatMap((v) => v.split(',').filter(Boolean)),
+    hideUnofficial: p.get('hideUnofficial') !== '0',
+    dataUrl: p.get('data'),
+    imageUrl: p.get('image')
   };
 }
 
@@ -55,8 +34,7 @@ export function readUrlConfig(): UrlConfig {
 export type DisplayRole = 'operator' | 'audience';
 
 export function readDisplayRole(): DisplayRole {
-  const p = queryString.parse(window.location.search);
-  const v = Array.isArray(p.display) ? p.display[0] : p.display;
+  const v = new URLSearchParams(window.location.search).get('display');
   return v === 'audience' ? 'audience' : 'operator';
 }
 

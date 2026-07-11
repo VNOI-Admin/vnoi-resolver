@@ -19,6 +19,7 @@ import { Pill } from './Pill';
 import { useAnimationJob } from './animation';
 import { easeInCubic, easeOutCubic } from './easing';
 import { useAnimationSpeed } from './animationSpeed';
+import { isTweening, retarget, tweenValue, type Tween } from './tween';
 
 // Row Y uses ease-IN so the row visibly lingers at the just-resolved score
 // before leaving its old rank. Score / penalty count-ups use ease-OUT.
@@ -122,43 +123,43 @@ function RowInner({
     userEl.x = layout.name.x + 8 + nameEl.width + USERNAME_GAP;
   }, [row.fullName, layout.name.x]);
 
-  const tween = useRef<{
-    fromY: number;
-    toY: number;
-    start: number;
-    initialized: boolean;
-  }>({ fromY: targetY, toY: targetY, start: 0, initialized: false });
+  const tween = useRef<Tween & { initialized: boolean }>({
+    from: targetY,
+    to: targetY,
+    start: 0,
+    initialized: false
+  });
 
   const scoreTextRef = useRef<PixiText>(null);
-  const scoreTween = useRef<{
-    from: number;
-    to: number;
-    start: number;
-    initialized: boolean;
-  }>({ from: row.total, to: row.total, start: 0, initialized: false });
+  const scoreTween = useRef<Tween & { initialized: boolean }>({
+    from: row.total,
+    to: row.total,
+    start: 0,
+    initialized: false
+  });
 
   const penaltyTextRef = useRef<PixiText>(null);
-  const penaltyTween = useRef<{
-    from: number;
-    to: number;
-    start: number;
-    initialized: boolean;
-  }>({ from: row.penalty, to: row.penalty, start: 0, initialized: false });
+  const penaltyTween = useRef<Tween & { initialized: boolean }>({
+    from: row.penalty,
+    to: row.penalty,
+    start: 0,
+    initialized: false
+  });
 
   // Skip formatPenalty + texture regen when the visible seconds haven't
   // changed (the underlying float may be lerping sub-second).
   const lastRenderedPenalty = useRef<number>(Math.floor(row.penalty));
 
   const job = useAnimationJob(() => {
+    const now = performance.now();
     const el = ref.current;
     let hasYTween = false;
     if (el) {
-      const { fromY, toY, start } = tween.current;
-      if (fromY !== toY) {
-        const t = Math.min(1, (performance.now() - start) / TWEEN_MS);
-        el.y = fromY + (toY - fromY) * easeInCubic(t);
-        if (t >= 1) tween.current.fromY = toY;
-        else hasYTween = true;
+      if (isTweening(tween.current)) {
+        el.y = tweenValue(tween.current, now, TWEEN_MS, easeInCubic);
+        if (now - tween.current.start >= TWEEN_MS) {
+          tween.current.from = tween.current.to;
+        } else hasYTween = true;
       }
       // zIndex priority: marked > tweening > stationary. Marked-row-last
       // render order in Body is the primary mechanism; this layer adds the
@@ -168,32 +169,33 @@ function RowInner({
 
     const scoreEl = scoreTextRef.current;
     let hasScoreTween = false;
-    if (scoreEl) {
-      const { from, to, start } = scoreTween.current;
-      if (from !== to) {
-        const t = Math.min(1, (performance.now() - start) / SCORE_TWEEN_MS);
-        const v = Math.round(from + (to - from) * easeOutCubic(t));
-        if (scoreEl.text !== String(v)) scoreEl.text = String(v);
-        if (t >= 1) scoreTween.current.from = to;
-        else hasScoreTween = true;
-      }
+    if (scoreEl && isTweening(scoreTween.current)) {
+      const v = Math.round(
+        tweenValue(scoreTween.current, now, SCORE_TWEEN_MS, easeOutCubic)
+      );
+      if (scoreEl.text !== String(v)) scoreEl.text = String(v);
+      if (now - scoreTween.current.start >= SCORE_TWEEN_MS) {
+        scoreTween.current.from = scoreTween.current.to;
+      } else hasScoreTween = true;
     }
 
     const penaltyEl = penaltyTextRef.current;
     let hasPenaltyTween = false;
-    if (penaltyEl) {
-      const { from, to, start } = penaltyTween.current;
-      if (from !== to) {
-        const t = Math.min(1, (performance.now() - start) / SCORE_TWEEN_MS);
-        const v = from + (to - from) * easeOutCubic(t);
-        const rounded = Math.floor(Math.max(0, v));
-        if (rounded !== lastRenderedPenalty.current) {
-          lastRenderedPenalty.current = rounded;
-          penaltyEl.text = formatPenalty(v);
-        }
-        if (t >= 1) penaltyTween.current.from = to;
-        else hasPenaltyTween = true;
+    if (penaltyEl && isTweening(penaltyTween.current)) {
+      const v = tweenValue(
+        penaltyTween.current,
+        now,
+        SCORE_TWEEN_MS,
+        easeOutCubic
+      );
+      const rounded = Math.floor(Math.max(0, v));
+      if (rounded !== lastRenderedPenalty.current) {
+        lastRenderedPenalty.current = rounded;
+        penaltyEl.text = formatPenalty(v);
       }
+      if (now - penaltyTween.current.start >= SCORE_TWEEN_MS) {
+        penaltyTween.current.from = penaltyTween.current.to;
+      } else hasPenaltyTween = true;
     }
 
     if (!hasYTween && !hasScoreTween && !hasPenaltyTween) {
@@ -212,26 +214,35 @@ function RowInner({
     if (!tween.current.initialized) {
       el.y = targetY;
       tween.current = {
-        fromY: targetY,
-        toY: targetY,
+        from: targetY,
+        to: targetY,
         start: 0,
         initialized: true
       };
       return;
     }
-    const targetUnchanged = tween.current.toY === targetY;
-    const inFlight = tween.current.fromY !== tween.current.toY;
-    if (targetUnchanged && !inFlight) return;
+    const targetUnchanged = tween.current.to === targetY;
+    if (targetUnchanged && !isTweening(tween.current)) return;
+    // Snapshot the rendered el.y (the value the tick last wrote) so a re-aim or
+    // a mid-flight speed change continues from there without a jump.
     tween.current = {
-      fromY: el.y,
-      toY: targetY,
-      start: performance.now(),
+      ...retarget(el.y, targetY, performance.now()),
       initialized: true
     };
     job.start();
   }, [targetY, job, TWEEN_MS]);
 
+  // The count-ups re-aim when the target OR the duration changes, like the
+  // Y tween above — the mid-flight duration case (a speed-slider drag) must
+  // re-snapshot too, or the tick divides the old elapsed by the NEW duration
+  // and the number snaps to its end value. Unlike Y there is no rendered
+  // pixel to read back, so the snapshot is computed with the duration the
+  // tick was using until this render (the prev ref); computing it with the
+  // new duration would bake the same jump into the snapshot.
+  const prevScoreTweenMs = useRef(SCORE_TWEEN_MS);
   useEffect(() => {
+    const shownMs = prevScoreTweenMs.current;
+    prevScoreTweenMs.current = SCORE_TWEEN_MS;
     if (!scoreTween.current.initialized) {
       scoreTween.current = {
         from: row.total,
@@ -241,25 +252,23 @@ function RowInner({
       };
       return;
     }
-    if (scoreTween.current.to === row.total) return;
-    const t = Math.min(
-      1,
-      (performance.now() - scoreTween.current.start) / SCORE_TWEEN_MS
-    );
-    const currentlyShown = Math.round(
-      scoreTween.current.from +
-        (scoreTween.current.to - scoreTween.current.from) * easeOutCubic(t)
+    if (scoreTween.current.to === row.total && !isTweening(scoreTween.current))
+      return;
+    const now = performance.now();
+    const shown = Math.round(
+      tweenValue(scoreTween.current, now, shownMs, easeOutCubic)
     );
     scoreTween.current = {
-      from: currentlyShown,
-      to: row.total,
-      start: performance.now(),
+      ...retarget(shown, row.total, now),
       initialized: true
     };
     job.start();
   }, [row.total, job, SCORE_TWEEN_MS]);
 
+  const prevPenaltyTweenMs = useRef(SCORE_TWEEN_MS);
   useEffect(() => {
+    const shownMs = prevPenaltyTweenMs.current;
+    prevPenaltyTweenMs.current = SCORE_TWEEN_MS;
     if (!penaltyTween.current.initialized) {
       penaltyTween.current = {
         from: row.penalty,
@@ -269,18 +278,15 @@ function RowInner({
       };
       return;
     }
-    if (penaltyTween.current.to === row.penalty) return;
-    const t = Math.min(
-      1,
-      (performance.now() - penaltyTween.current.start) / SCORE_TWEEN_MS
-    );
-    const currentlyShown =
-      penaltyTween.current.from +
-      (penaltyTween.current.to - penaltyTween.current.from) * easeOutCubic(t);
+    if (
+      penaltyTween.current.to === row.penalty &&
+      !isTweening(penaltyTween.current)
+    )
+      return;
+    const now = performance.now();
+    const shown = tweenValue(penaltyTween.current, now, shownMs, easeOutCubic);
     penaltyTween.current = {
-      from: currentlyShown,
-      to: row.penalty,
-      start: performance.now(),
+      ...retarget(shown, row.penalty, now),
       initialized: true
     };
     job.start();

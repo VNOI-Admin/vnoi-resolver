@@ -7,8 +7,7 @@
 // the operator stop just before an award for the ceremony beat, or just
 // before a big rank shift to let it play out.
 
-import type { ResolverEvent } from '../lib/resolver';
-import { HOLD_MS } from '../lib/resolver';
+import type { HoldClass, ResolverEvent } from '../lib/resolver';
 
 function nextWhere(
   length: number,
@@ -45,24 +44,24 @@ export function prevAwardCursor(
   return prevWhere(cursor, (c) => events[c]!.kind === 'show_award');
 }
 
-// A "rank change" is an event whose aftermath was classified SOLVED_MOVE —
-// a resolve with points > 0 that shifted the team's rank. eventHoldMs[c] is
-// the hold AFTER events[c], so eventHoldMs[c] === SOLVED_MOVE means
-// events[c] is the rank-mover.
+// A "rank change" is an event classified SOLVED_MOVE — a resolve with
+// points > 0 that shifted the team's rank. eventClass[c] tags events[c]'s
+// aftermath, so matching the tag (not a hold-time value) keeps jump-nav
+// correct even if HOLD_MS is retuned.
 export function nextMoveCursor(
-  eventHoldMs: readonly number[],
+  eventClass: readonly HoldClass[],
   cursor: number
 ): number | null {
   return nextWhere(
-    eventHoldMs.length,
+    eventClass.length,
     cursor,
-    (c) => eventHoldMs[c] === HOLD_MS.SOLVED_MOVE
+    (c) => eventClass[c] === 'SOLVED_MOVE'
   );
 }
 
 export function prevMoveCursor(
-  eventHoldMs: readonly number[],
+  eventClass: readonly HoldClass[],
   cursor: number
 ): number | null {
-  return prevWhere(cursor, (c) => eventHoldMs[c] === HOLD_MS.SOLVED_MOVE);
+  return prevWhere(cursor, (c) => eventClass[c] === 'SOLVED_MOVE');
 }

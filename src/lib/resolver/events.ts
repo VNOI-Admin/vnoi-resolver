@@ -4,11 +4,10 @@ import {
   InternalState,
   InternalUser,
   PointByProblemId,
-  ProblemAttemptStatus,
   SubmissionById,
   UserRow
 } from './types';
-import { getScoreClass } from './scoring';
+import { classifyProblem } from './scoring';
 import { calculatePenalty } from './penalty';
 
 export type ResolverEvent =
@@ -45,6 +44,7 @@ export function applyEvent(
         currentRowIndex: event.rowIndex,
         markedUserId: event.userId,
         markedProblemId: -1,
+        markedSubmissionId: -1,
         shownImage: false,
         imageSrc: null
       };
@@ -71,23 +71,33 @@ export function applyEvent(
             `submissionId=${event.submissionId})`
         );
       }
-      return { ...state, markedProblemId: event.problemId };
+      return {
+        ...state,
+        markedProblemId: event.problemId,
+        markedSubmissionId: event.submissionId
+      };
     }
 
     case 'resolve': {
       const submission = ctx.submissionById[event.submissionId];
       const user = state.users[event.userId];
-      // The submission.userId check defends against malformed action logs
-      // (e.g. replay against a dataset with recycled submissionIds) that
-      // would otherwise credit User B's submission to User A.
+      // Throw, don't no-op (same policy as mark_problem). computeNextEvent
+      // only emits resolve for a pending submission that exists and belongs
+      // to this user, so a mismatch means corrupt input. A silent no-op would
+      // leave markedProblemId set and computeNextEvent would re-emit the same
+      // resolve every iteration — an unbounded precompute loop.
       if (!submission || !user || submission.userId !== event.userId) {
-        return state;
+        throw new Error(
+          `applyEvent: resolve with no matching pending submission ` +
+            `(userId=${event.userId}, submissionId=${event.submissionId})`
+        );
       }
       const newUser = applyResolveToUser(user, submission, ctx);
       return {
         ...state,
         users: { ...state.users, [event.userId]: newUser },
-        markedProblemId: -1
+        markedProblemId: -1,
+        markedSubmissionId: -1
       };
     }
 
@@ -106,37 +116,39 @@ export function applyEvent(
         currentRowIndex: -1,
         markedUserId: -1,
         markedProblemId: -1,
+        markedSubmissionId: -1,
         shownImage: false,
         imageSrc: null
       };
   }
 }
 
-function applyResolveToUser(
+// The single VNOI scoring transition for one submission, shared by the build
+// (folds it over every submission, recordAttempt = true to accumulate the
+// attempt history) and the resolve event (recordAttempt = false — build
+// already recorded the attempt). One implementation removes the old
+// build-vs-resolve drift. Both an improving submission and a 0-on-0
+// resubmission advance the per-problem last-altering id; only the improving
+// one ends up counting toward the penalty finish time (calculatePenalty
+// skips 0-point entries).
+export function applySubmissionToUser(
   user: InternalUser,
   submission: InputSubmission,
-  ctx: ApplyCtx
+  problemPoints: number,
+  recordAttempt: boolean
 ): InternalUser {
   const problemId = submission.problemId;
   const submissionId = submission.submissionId;
-  const problemPoints = ctx.pointByProblemId[problemId] ?? 0;
   const currentPoints = user.points[problemId] ?? 0;
 
   let points = user.points;
   let lastAlteringByProblem = user.lastAlteringScoreSubmissionIdByProblemId;
-  let lastAltering = user.lastAlteringScoreSubmissionId;
-
   if (submission.points > currentPoints) {
     points = { ...points, [problemId]: submission.points };
     lastAlteringByProblem = {
       ...lastAlteringByProblem,
       [problemId]: submissionId
     };
-    // Math.max-by-submissionId works as a "latest in time" tracker only
-    // because we require submissionId to be monotonic in time (validated
-    // at parse boundary). If a future input source breaks that invariant
-    // (re-numbered IDs, recycled IDs), penalty would use the wrong time.
-    lastAltering = Math.max(lastAltering, submissionId);
   } else if (submission.points === 0 && currentPoints === 0) {
     lastAlteringByProblem = {
       ...lastAlteringByProblem,
@@ -144,32 +156,43 @@ function applyResolveToUser(
     };
   }
 
-  const finalPoints = points[problemId] ?? 0;
-  let status: ProblemAttemptStatus;
-  if (finalPoints === 0) {
-    status = ProblemAttemptStatus.INCORRECT;
-  } else if (finalPoints < problemPoints) {
-    status = ProblemAttemptStatus.PARTIAL;
-  } else {
-    status = ProblemAttemptStatus.ACCEPTED;
-  }
+  const { status, scoreClass } = classifyProblem(
+    points[problemId] ?? 0,
+    problemPoints
+  );
 
-  const next: InternalUser = {
+  return {
     ...user,
     points,
     status: { ...user.status, [problemId]: status },
-    scoreClass: {
-      ...user.scoreClass,
-      [problemId]: getScoreClass(finalPoints, problemPoints)
-    },
+    scoreClass: { ...user.scoreClass, [problemId]: scoreClass },
     lastAlteringScoreSubmissionIdByProblemId: lastAlteringByProblem,
-    lastAlteringScoreSubmissionId: lastAltering,
-    pendingSubmissionIds: user.pendingSubmissionIds.filter(
-      (id) => id !== submissionId
+    submissionIdsByProblemId: recordAttempt
+      ? {
+          ...user.submissionIdsByProblemId,
+          [problemId]: [
+            ...(user.submissionIdsByProblemId[problemId] ?? []),
+            submissionId
+          ]
+        }
+      : user.submissionIdsByProblemId
+  };
+}
+
+function applyResolveToUser(
+  user: InternalUser,
+  submission: InputSubmission,
+  ctx: ApplyCtx
+): InternalUser {
+  const problemPoints = ctx.pointByProblemId[submission.problemId] ?? 0;
+  const scored = applySubmissionToUser(user, submission, problemPoints, false);
+  const next: InternalUser = {
+    ...scored,
+    pendingSubmissionIds: scored.pendingSubmissionIds.filter(
+      (id) => id !== submission.submissionId
     ),
     penalty: 0
   };
-
   next.penalty = calculatePenalty(next, ctx.submissionById);
   return next;
 }
@@ -220,13 +243,15 @@ export function computeNextEvent(
         submissionId: pickedId
       };
     }
-    const pendingId = user.pendingSubmissionIds.find(
-      (id) => ctx.submissionById[id]?.problemId === state.markedProblemId
-    );
-    if (pendingId === undefined) {
+    // Resolve the exact submission mark_problem validated, not "some pending
+    // on the marked problem" — the two differ if a user ever had multiple
+    // pendings on one problem, and consuming markedSubmissionId removes the
+    // dependence on build emitting at most one pending per problem.
+    const markedId = state.markedSubmissionId;
+    if (markedId === -1 || !user.pendingSubmissionIds.includes(markedId)) {
       return null;
     }
-    return { kind: 'resolve', userId: targetUserId, submissionId: pendingId };
+    return { kind: 'resolve', userId: targetUserId, submissionId: markedId };
   }
 
   const currentRow = ranking[state.currentRowIndex];

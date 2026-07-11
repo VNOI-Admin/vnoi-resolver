@@ -16,7 +16,6 @@ function makeUser(
     status: {},
     scoreClass: {},
     lastAlteringScoreSubmissionIdByProblemId: {},
-    lastAlteringScoreSubmissionId: 0,
     submissionIdsByProblemId: {},
     pendingSubmissionIds: [],
     penalty
@@ -30,6 +29,7 @@ function makeState(users: InternalUser[]): InternalState {
     currentRowIndex: users.length - 1,
     markedUserId: -1,
     markedProblemId: -1,
+    markedSubmissionId: -1,
     users: Object.fromEntries(users.map((u) => [u.userId, u]))
   };
 }

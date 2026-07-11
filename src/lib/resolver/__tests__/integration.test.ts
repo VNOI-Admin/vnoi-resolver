@@ -45,7 +45,6 @@ function buildPrivateState(inputData: InputData): InternalState {
     submissions: filtered,
     inputData,
     pointByProblemId,
-    problemById,
     submissionById
   });
 }

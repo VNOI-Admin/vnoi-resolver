@@ -10,17 +10,6 @@ import {
   summariseNow
 } from './format';
 
-function useNowSummary(
-  events: readonly ResolverEvent[],
-  cursor: number,
-  ctx: LookupCtx
-) {
-  return useMemo(
-    () => summariseNow(events, cursor, ctx),
-    [events, cursor, ctx]
-  );
-}
-
 /** NOW pane: what the audience is currently looking at. */
 export function NowPane({
   events,
@@ -35,7 +24,10 @@ export function NowPane({
   snapshot: Snapshot;
   isPreviewing: boolean;
 }) {
-  const summary = useNowSummary(events, cursor, ctx);
+  const summary = useMemo(
+    () => summariseNow(events, cursor, ctx),
+    [events, cursor, ctx]
+  );
   const activeUser =
     summary.activeUserId !== null ? ctx.usersById[summary.activeUserId] : null;
   const activeRow =

@@ -45,21 +45,3 @@ export function sortBy<T>(
   });
   return sorted;
 }
-
-export function minBy<T>(
-  arr: readonly T[],
-  fn: (item: T) => number
-): T | undefined {
-  if (arr.length === 0) return undefined;
-  let best = arr[0]!;
-  let bestVal = fn(best);
-  for (let i = 1; i < arr.length; i++) {
-    const item = arr[i]!;
-    const v = fn(item);
-    if (v < bestVal) {
-      best = item;
-      bestVal = v;
-    }
-  }
-  return best;
-}

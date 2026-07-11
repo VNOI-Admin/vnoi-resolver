@@ -21,7 +21,6 @@ function user(overrides: Partial<InternalUser> = {}): InternalUser {
     status: {},
     scoreClass: {},
     lastAlteringScoreSubmissionIdByProblemId: {},
-    lastAlteringScoreSubmissionId: -1,
     submissionIdsByProblemId: {},
     pendingSubmissionIds: [],
     penalty: 0,
@@ -39,7 +38,6 @@ describe('calculatePenalty', () => {
       10: sub(10, 1, 500, 100)
     };
     const u = user({
-      lastAlteringScoreSubmissionId: 10,
       lastAlteringScoreSubmissionIdByProblemId: { 1: 10 },
       submissionIdsByProblemId: { 1: [10] },
       points: { 1: 100 },
@@ -55,7 +53,6 @@ describe('calculatePenalty', () => {
       3: sub(3, 1, 300, 100)
     };
     const u = user({
-      lastAlteringScoreSubmissionId: 3,
       lastAlteringScoreSubmissionIdByProblemId: { 1: 3 },
       submissionIdsByProblemId: { 1: [1, 2, 3] },
       points: { 1: 100 }
@@ -70,12 +67,27 @@ describe('calculatePenalty', () => {
       3: sub(3, 2, 250, 0)
     };
     const u = user({
-      lastAlteringScoreSubmissionId: 1,
       lastAlteringScoreSubmissionIdByProblemId: { 1: 1, 2: 3 },
       submissionIdsByProblemId: { 1: [1], 2: [2, 3] },
       points: { 1: 50, 2: 0 }
     });
     expect(calculatePenalty(u, submissionById)).toBe(100);
+  });
+
+  it('picks the finish by TIME when ids interleave across problems', () => {
+    // Ids are only monotonic-in-time per problem: problem A's improvement
+    // (id 900) happened at t=100, problem B's (id 800) at t=500. The finish
+    // is B's t=500 — a max-by-id tracker would wrongly report t=100.
+    const submissionById: SubmissionById = {
+      900: sub(900, 1, 100, 100),
+      800: sub(800, 2, 500, 100)
+    };
+    const u = user({
+      lastAlteringScoreSubmissionIdByProblemId: { 1: 900, 2: 800 },
+      submissionIdsByProblemId: { 1: [900], 2: [800] },
+      points: { 1: 100, 2: 100 }
+    });
+    expect(calculatePenalty(u, submissionById)).toBe(500);
   });
 
   it('counts only attempts before the last altering submission', () => {
@@ -85,7 +97,6 @@ describe('calculatePenalty', () => {
       3: sub(3, 1, 300, 50)
     };
     const u = user({
-      lastAlteringScoreSubmissionId: 2,
       lastAlteringScoreSubmissionIdByProblemId: { 1: 2 },
       submissionIdsByProblemId: { 1: [1, 2, 3] },
       points: { 1: 50 }

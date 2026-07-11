@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { ResolverEvent } from '../../lib/resolver';
-import { HOLD_MS } from '../../lib/resolver';
+import type { HoldClass, ResolverEvent } from '../../lib/resolver';
 import {
   nextAwardCursor,
   prevAwardCursor,
@@ -21,19 +20,17 @@ const events: ResolverEvent[] = [
   { kind: 'end' }
 ];
 
-// Rank-changes (SOLVED_MOVE) at indices 1 and 4; everything else is some
-// other hold value.
-const X = HOLD_MS.SELECT_TEAM;
-const M = HOLD_MS.SOLVED_MOVE;
-const eventHoldMs = [
-  X,
-  M,
-  HOLD_MS.DEFAULT,
-  X,
-  M,
-  HOLD_MS.DEFAULT,
-  X,
-  HOLD_MS.DEFAULT
+// Rank-changes (SOLVED_MOVE) at indices 1 and 4; everything else some other
+// class.
+const eventClass: HoldClass[] = [
+  'SELECT_TEAM',
+  'SOLVED_MOVE',
+  'DEFAULT',
+  'SELECT_TEAM',
+  'SOLVED_MOVE',
+  'DEFAULT',
+  'SELECT_TEAM',
+  'DEFAULT'
 ];
 
 describe('seek: awards', () => {
@@ -62,25 +59,25 @@ describe('seek: awards', () => {
 
 describe('seek: rank changes', () => {
   it('nextMoveCursor finds the first SOLVED_MOVE strictly after the cursor', () => {
-    expect(nextMoveCursor(eventHoldMs, 0)).toBe(1);
-    expect(nextMoveCursor(eventHoldMs, 1)).toBe(4);
-    expect(nextMoveCursor(eventHoldMs, 3)).toBe(4);
+    expect(nextMoveCursor(eventClass, 0)).toBe(1);
+    expect(nextMoveCursor(eventClass, 1)).toBe(4);
+    expect(nextMoveCursor(eventClass, 3)).toBe(4);
   });
 
   it('nextMoveCursor returns null past the last move', () => {
-    expect(nextMoveCursor(eventHoldMs, 4)).toBeNull();
-    expect(nextMoveCursor(eventHoldMs, 7)).toBeNull();
+    expect(nextMoveCursor(eventClass, 4)).toBeNull();
+    expect(nextMoveCursor(eventClass, 7)).toBeNull();
   });
 
   it('prevMoveCursor finds the last SOLVED_MOVE strictly before the cursor', () => {
-    expect(prevMoveCursor(eventHoldMs, 7)).toBe(4);
-    expect(prevMoveCursor(eventHoldMs, 4)).toBe(1);
-    expect(prevMoveCursor(eventHoldMs, 3)).toBe(1);
+    expect(prevMoveCursor(eventClass, 7)).toBe(4);
+    expect(prevMoveCursor(eventClass, 4)).toBe(1);
+    expect(prevMoveCursor(eventClass, 3)).toBe(1);
   });
 
   it('prevMoveCursor returns null before the first move', () => {
-    expect(prevMoveCursor(eventHoldMs, 1)).toBeNull();
-    expect(prevMoveCursor(eventHoldMs, 0)).toBeNull();
+    expect(prevMoveCursor(eventClass, 1)).toBeNull();
+    expect(prevMoveCursor(eventClass, 0)).toBeNull();
   });
 });
 

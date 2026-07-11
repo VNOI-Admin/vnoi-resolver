@@ -2,6 +2,7 @@ import { useCallback, useMemo, useReducer, useRef } from 'react';
 
 import {
   AwardImageMap,
+  HoldClass,
   InputData,
   InputSubmission,
   PointByProblemId,
@@ -18,7 +19,7 @@ import {
   rankUsers
 } from './lib/resolver';
 
-export { parseInputData } from './lib/resolver';
+export { parseInputData, parseAwardImageMap } from './lib/resolver';
 export type { AwardImageMap, InputData } from './lib/resolver';
 
 export type Snapshot = {
@@ -64,6 +65,9 @@ export function useResolver({
   // firing events[i+1] — classified by drama (SOLVED_MOVE longest,
   // FAILED shortest). Consumed by OperatorConsole's autoplay loop.
   eventHoldMs: readonly number[];
+  // The kind of each event's aftermath, lockstep with events[]. Jump-nav
+  // matches on this (not on a hold duration) to find rank-change events.
+  eventClass: readonly HoldClass[];
   // Read-only state preview at an arbitrary cursor. Used by the operator
   // console on queue/timeline hover. Memoised per cursor; invalidates when
   // a divergence rebuilds the events/states arrays.
@@ -166,6 +170,19 @@ export function useResolver({
     peekCacheRef.current = { statesKey: sim.states, cache: new Map() };
   }
 
+  // Board projections (chooser rows + hover preview) for the current states.
+  // The chooser computes a projected rank per pending choice and the hover
+  // re-projects the picked one; caching on the same sim.states identity makes
+  // the second a hit instead of a recomputed rankUsers pass.
+  const PROJ_CACHE_MAX = 64;
+  const projCacheRef = useRef<{
+    statesKey: readonly unknown[] | null;
+    cache: Map<string, Snapshot | null>;
+  }>({ statesKey: null, cache: new Map() });
+  if (projCacheRef.current.statesKey !== sim.states) {
+    projCacheRef.current = { statesKey: sim.states, cache: new Map() };
+  }
+
   const peekAt = useCallback(
     (cursor: number): Snapshot => {
       const c = Math.max(0, Math.min(sim.events.length, cursor));
@@ -192,7 +209,11 @@ export function useResolver({
       cache.set(c, snapshot);
       return snapshot;
     },
-    [sim, unofficialContestants]
+    // Narrowed to the arrays peekAt actually reads: a default-choice step only
+    // bumps sim.cursor (same arrays), so the callback — and the cache keyed on
+    // sim.states — stay stable across cursor moves; only a divergence (new
+    // arrays) recreates it.
+    [sim.events, sim.states, unofficialContestants]
   );
 
   const pendingSubmissionsAt = useCallback(
@@ -207,7 +228,7 @@ export function useResolver({
       }
       return out;
     },
-    [sim, submissionById]
+    [sim.events, sim.states, submissionById]
   );
 
   // Full projected board after revealing a SINGLE pending submission for a
@@ -217,40 +238,59 @@ export function useResolver({
   const projectSnapshotAfter = useCallback(
     (cursor: number, userId: number, submissionId: number): Snapshot | null => {
       const c = Math.max(0, Math.min(sim.events.length, cursor));
-      const state = sim.states[c];
-      const user = state?.users[userId];
-      if (!user || !user.pendingSubmissionIds.includes(submissionId)) {
-        return null;
+      const key = `${c}:${userId}:${submissionId}`;
+      const { cache } = projCacheRef.current;
+      const hit = cache.get(key);
+      if (hit !== undefined) return hit; // includes a cached null
+
+      const result = ((): Snapshot | null => {
+        const state = sim.states[c];
+        const user = state?.users[userId];
+        if (!user || !user.pendingSubmissionIds.includes(submissionId)) {
+          return null;
+        }
+        const sub = submissionById[submissionId];
+        if (!sub) return null;
+
+        const applyCtx = { submissionById, pointByProblemId };
+        const afterMark = applyEvent(
+          state,
+          {
+            kind: 'mark_problem',
+            userId,
+            problemId: sub.problemId,
+            submissionId
+          },
+          applyCtx
+        );
+        const afterResolve = applyEvent(
+          afterMark,
+          { kind: 'resolve', userId, submissionId },
+          applyCtx
+        );
+        return {
+          data: rankUsers(afterResolve, unofficialContestants),
+          currentRowIndex: afterResolve.currentRowIndex,
+          markedUserId: userId,
+          markedProblemId: sub.problemId,
+          imageSrc: null
+        };
+      })();
+
+      if (cache.size >= PROJ_CACHE_MAX) {
+        const oldest = cache.keys().next().value;
+        if (oldest !== undefined) cache.delete(oldest);
       }
-      const sub = submissionById[submissionId];
-      if (!sub) return null;
-
-      const applyCtx = { submissionById, pointByProblemId };
-      const afterMark = applyEvent(
-        state,
-        {
-          kind: 'mark_problem',
-          userId,
-          problemId: sub.problemId,
-          submissionId
-        },
-        applyCtx
-      );
-      const afterResolve = applyEvent(
-        afterMark,
-        { kind: 'resolve', userId, submissionId },
-        applyCtx
-      );
-
-      return {
-        data: rankUsers(afterResolve, unofficialContestants),
-        currentRowIndex: afterResolve.currentRowIndex,
-        markedUserId: userId,
-        markedProblemId: sub.problemId,
-        imageSrc: null
-      };
+      cache.set(key, result);
+      return result;
     },
-    [sim, submissionById, pointByProblemId, unofficialContestants]
+    [
+      sim.events,
+      sim.states,
+      submissionById,
+      pointByProblemId,
+      unofficialContestants
+    ]
   );
 
   const projectRankAfter = useCallback(
@@ -283,6 +323,7 @@ export function useResolver({
     totalEvents: sim.events.length,
     events: sim.events,
     eventHoldMs: sim.eventHoldMs,
+    eventClass: sim.eventClass,
     peekAt,
     pendingSubmissionsAt,
     projectRankAfter,

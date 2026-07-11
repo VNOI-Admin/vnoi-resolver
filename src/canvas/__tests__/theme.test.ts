@@ -16,7 +16,6 @@ const REQUIRED_COLOR_KEYS: (keyof Theme['colors'])[] = [
   'accent',
   'text',
   'textMuted',
-  'textRank',
   'pillPending',
   'score_0',
   'score_0_10',

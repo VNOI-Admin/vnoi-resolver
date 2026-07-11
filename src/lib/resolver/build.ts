@@ -2,12 +2,13 @@ import {
   InputData,
   InputSubmission,
   InternalState,
+  InternalUser,
   PointByProblemId,
   ProblemAttemptStatus,
   ProblemById,
   SubmissionById
 } from './types';
-import { getScoreClass } from './scoring';
+import { applySubmissionToUser } from './events';
 import { calculatePenalty } from './penalty';
 import { keyBy, mapValues, sortBy } from './util';
 
@@ -15,13 +16,11 @@ export function processSubmissions({
   submissions,
   inputData,
   pointByProblemId,
-  problemById,
   submissionById
 }: {
   submissions: InputSubmission[];
   inputData: InputData;
   pointByProblemId: PointByProblemId;
-  problemById: ProblemById;
   submissionById: SubmissionById;
 }): InternalState {
   const state: InternalState = {
@@ -30,70 +29,48 @@ export function processSubmissions({
     currentRowIndex: inputData.users.length - 1,
     markedUserId: -1,
     markedProblemId: -1,
+    markedSubmissionId: -1,
     users: keyBy(
-      inputData.users.map((user) => ({
-        ...user,
-        points: mapValues(pointByProblemId, () => 0),
-        status: mapValues(
-          pointByProblemId,
-          () => ProblemAttemptStatus.UNATTEMPTED
-        ),
-        scoreClass: mapValues(pointByProblemId, () => 'a'),
-        lastAlteringScoreSubmissionIdByProblemId: {},
-        lastAlteringScoreSubmissionId: -1,
-        submissionIdsByProblemId: mapValues(
-          pointByProblemId,
-          () => [] as number[]
-        ),
-        pendingSubmissionIds: [] as number[],
-        penalty: 0
-      })),
+      inputData.users.map(
+        (user): InternalUser => ({
+          ...user,
+          points: mapValues(pointByProblemId, () => 0),
+          status: mapValues(
+            pointByProblemId,
+            () => ProblemAttemptStatus.UNATTEMPTED
+          ),
+          scoreClass: mapValues(pointByProblemId, () => 'a'),
+          lastAlteringScoreSubmissionIdByProblemId: {},
+          submissionIdsByProblemId: mapValues(
+            pointByProblemId,
+            () => [] as number[]
+          ),
+          pendingSubmissionIds: [],
+          penalty: 0
+        })
+      ),
       (u) => u.userId
     )
   };
 
-  const sorted = sortBy(submissions, (s) => s.submissionId);
-
-  for (const submission of sorted) {
+  // Fold the shared scoring transition over every submission (in submissionId
+  // order); applySubmissionToUser keeps points/status/scoreClass/last-altering
+  // in lockstep so there's no separate status pass to drift out of sync.
+  for (const submission of sortBy(submissions, (s) => s.submissionId)) {
     const user = state.users[submission.userId];
     if (!user) continue; // user outside this contest
-    const problemId = submission.problemId;
-    const submissionId = submission.submissionId;
-    // user.points has every problemId in problemById, so undefined = unknown
-    // problem (ignored).
-    const userPoints = user.points[problemId];
-    if (userPoints === undefined) continue;
-
-    if (submission.points > userPoints) {
-      user.points[problemId] = submission.points;
-      user.lastAlteringScoreSubmissionIdByProblemId[problemId] = submissionId;
-      user.lastAlteringScoreSubmissionId = submissionId;
-    } else if (submission.points === 0 && userPoints === 0) {
-      user.lastAlteringScoreSubmissionIdByProblemId[problemId] = submissionId;
-    }
-
-    user.submissionIdsByProblemId[problemId]!.push(submissionId);
+    const problemPoints = pointByProblemId[submission.problemId];
+    if (problemPoints === undefined) continue; // unknown problem
+    state.users[submission.userId] = applySubmissionToUser(
+      user,
+      submission,
+      problemPoints,
+      true
+    );
   }
 
   for (const userId in state.users) {
-    const user = state.users[userId]!; // key came from Object.keys(state.users)
-    for (const problemId in problemById) {
-      const subIds = user.submissionIdsByProblemId[problemId];
-      if (!subIds || subIds.length === 0) continue;
-
-      const userPts = user.points[problemId] ?? 0;
-      const problemPts = pointByProblemId[problemId] ?? 0;
-      if (userPts === 0) {
-        user.status[problemId] = ProblemAttemptStatus.INCORRECT;
-      } else if (userPts < problemPts) {
-        user.status[problemId] = ProblemAttemptStatus.PARTIAL;
-      } else {
-        user.status[problemId] = ProblemAttemptStatus.ACCEPTED;
-      }
-
-      user.scoreClass[problemId] = getScoreClass(userPts, problemPts);
-    }
-
+    const user = state.users[userId]!;
     user.penalty = calculatePenalty(user, submissionById);
   }
 
@@ -133,14 +110,12 @@ export function buildInitialState({
     ),
     inputData,
     pointByProblemId,
-    problemById,
     submissionById
   });
   const privateState = processSubmissions({
     submissions: filteredSubmissions,
     inputData,
     pointByProblemId,
-    problemById,
     submissionById
   });
 
@@ -150,6 +125,12 @@ export function buildInitialState({
     const publicUser = publicState.users[userId];
     const privateUser = privateState.users[userId];
     if (!publicUser || !privateUser) continue;
+    // The public penalty was already computed against the public-only attempt
+    // lists; swapping in the full (private) lists here stays consistent only
+    // because calculatePenalty counts attempts with id < the public
+    // last-altering id, and parse-time monotonicity guarantees post-freeze ids
+    // are larger. The reveal needs the full lists so resolve-time penalty
+    // recompute sees every attempt.
     publicUser.submissionIdsByProblemId = privateUser.submissionIdsByProblemId;
 
     for (const problem of inputData.problems) {

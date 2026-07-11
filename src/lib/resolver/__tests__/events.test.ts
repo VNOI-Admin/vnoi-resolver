@@ -12,18 +12,14 @@ import {
   parseInputData,
   rankUsers
 } from '..';
-// minBy is an internal helper, not part of the public surface. The test
-// uses it to assert the "lowest-problemId pending submission wins" default
-// in computeNextEvent. Imported directly from util.
-import { minBy } from '../util';
 import type {
   AwardImageMap,
   InputData,
-  NextEventCtx,
   PointByProblemId,
   ResolverEvent,
   SubmissionById
 } from '..';
+import type { NextEventCtx } from '../events';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const DATA_PATH = join(HERE, '../../../../public/vnoicup24/data.json');
@@ -136,30 +132,27 @@ describe('applyEvent', () => {
     expect(after.markedProblemId).toBe(-1);
   });
 
-  it('resolve with an unknown submissionId returns state unchanged', () => {
+  it('resolve with an unknown submissionId throws', () => {
     const base = buildBase();
     const userId = Object.keys(base.users)
       .map(Number)
       .find((id) => base.users[id]!.pendingSubmissionIds.length > 0)!;
-    // Pick a submissionId that definitely isn't in the contest data.
     const bogusId = 99_999_999;
-    const after = applyEvent(
-      base,
-      { kind: 'resolve', userId, submissionId: bogusId },
-      ctx
-    );
-    expect(after).toBe(base);
+    expect(() =>
+      applyEvent(base, { kind: 'resolve', userId, submissionId: bogusId }, ctx)
+    ).toThrow(/resolve with no matching pending submission/);
   });
 
-  it('resolve with an unknown userId returns state unchanged', () => {
+  it('resolve with an unknown userId throws', () => {
     const base = buildBase();
     const knownSubId = Number(Object.keys(ctx.submissionById)[0]);
-    const after = applyEvent(
-      base,
-      { kind: 'resolve', userId: -1, submissionId: knownSubId },
-      ctx
-    );
-    expect(after).toBe(base);
+    expect(() =>
+      applyEvent(
+        base,
+        { kind: 'resolve', userId: -1, submissionId: knownSubId },
+        ctx
+      )
+    ).toThrow(/resolve with no matching pending submission/);
   });
 
   it('show_award / hide_award toggle image state', () => {
@@ -218,9 +211,12 @@ describe('computeNextEvent', () => {
       if (!ev) throw new Error('no event');
       if (ev.kind === 'mark_problem') {
         const user = state.users[state.markedUserId]!;
-        const expectedSubId = minBy(
-          user.pendingSubmissionIds,
-          (id) => ctx.submissionById[id]!.problemId
+        // The default pick is the pending submission on the lowest problemId.
+        const expectedSubId = user.pendingSubmissionIds.reduce((best, id) =>
+          ctx.submissionById[id]!.problemId <
+          ctx.submissionById[best]!.problemId
+            ? id
+            : best
         );
         expect(ev.submissionId).toBe(expectedSubId);
         return;

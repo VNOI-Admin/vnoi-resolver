@@ -20,6 +20,19 @@ import { useTheme } from './theme';
 import { AnimationRoot, useAnimationJob } from './animation';
 import { easeOutCubic } from './easing';
 import { useAnimationSpeed } from './animationSpeed';
+import {
+  cameraTargetY as cameraTargetYFor,
+  framingIndex,
+  rowRenderList,
+  visibleRowRange
+} from './cameraGeometry';
+import {
+  isTweenDone,
+  isTweening,
+  retarget,
+  tweenValue,
+  type Tween
+} from './tween';
 
 // Register Pixi classes for JSX use (<pixiContainer>, <pixiGraphics>, <pixiText>).
 extend({ Container, Graphics, Text });
@@ -27,29 +40,6 @@ extend({ Container, Graphics, Text });
 // Tween base, divided by speed at consumption. 800 keeps the camera pan
 // inside the 1000/speed autoplay interval at every speed.
 const CAMERA_TWEEN_MS_BASE = 800;
-
-// Padding above/below the visible window to keep in-flight row tweens
-// mounted when they slide in from outside the viewport.
-const OVERSCAN = 20;
-
-// How many rows the camera leaves visible below the current cursor. Putting
-// the cursor at the very bottom worked but the audience couldn't see the
-// next contenders, and a row glued to the bottom edge is harder to read
-// than one a couple of rows up. Lookahead also implicitly centres the
-// cursor a bit more — when the camera maxes out near the end of the
-// reveal, the clamp keeps the cursor in frame at the top of the band.
-const CURSOR_LOOKAHEAD_ROWS = 2;
-
-// @pixi/react sets backgroundColor on mount but doesn't always flow prop
-// changes through. Push the value imperatively on theme change.
-function ThemeBgSync({ bg }: { bg: number }) {
-  const { app } = useApplication();
-  useEffect(() => {
-    if (!app) return;
-    app.renderer.background.color = bg;
-  }, [app, bg]);
-  return null;
-}
 
 function useViewportSize() {
   const [size, setSize] = useState(() => ({
@@ -77,6 +67,31 @@ function useViewportSize() {
   return size;
 }
 
+// The backgroundColor prop on <Application> is init-only: @pixi/react passes
+// applicationProps to app.init() exactly once, and later renders assign an
+// inert own property (Pixi's Application has no backgroundColor accessor —
+// the clear color lives on the renderer's BackgroundSystem). Theme cycles
+// therefore have to push the color imperatively. app.renderer doesn't exist
+// until async init completes and the context gives no reactive signal for
+// that (verified live: an isInitialised-gated effect never fired), so this
+// retries on rAF until the renderer is there — a handful of frames at most.
+function BackgroundSync({ color }: { color: number }) {
+  const { app } = useApplication();
+  useEffect(() => {
+    let raf = 0;
+    const apply = () => {
+      if (app.renderer) {
+        app.renderer.background.color = color;
+        return;
+      }
+      raf = requestAnimationFrame(apply);
+    };
+    apply();
+    return () => cancelAnimationFrame(raf);
+  }, [app, color]);
+  return null;
+}
+
 export function Scoreboard({
   data,
   problems,
@@ -98,18 +113,6 @@ export function Scoreboard({
   );
 
   const bodyHeight = Math.max(0, viewport.height - HEADER_HEIGHT);
-  const contentHeight = data.length * CARD_HEIGHT;
-
-  // Target camera Y: align (cursor row's bottom + CURSOR_LOOKAHEAD_ROWS) to
-  // the viewport bottom. Clamp to [0, max] for the edges — near the top of
-  // the scoreboard the cursor naturally sits below the header; near the
-  // bottom the lookahead is implicitly cut by the max-scroll clamp.
-  const cameraTargetY = useMemo(() => {
-    if (currentRowIndex < 0) return 0;
-    const bottom = (currentRowIndex + 1 + CURSOR_LOOKAHEAD_ROWS) * CARD_HEIGHT;
-    const max = Math.max(0, contentHeight - bodyHeight);
-    return Math.min(Math.max(0, bottom - bodyHeight), max);
-  }, [currentRowIndex, contentHeight, bodyHeight]);
 
   return (
     <Application
@@ -121,10 +124,10 @@ export function Scoreboard({
       resolution={window.devicePixelRatio || 1}
       autoDensity
     >
+      <BackgroundSync color={theme.colors.bg} />
       <AnimationRoot>
-        <ThemeBgSync bg={theme.colors.bg} />
         <Body
-          cameraTargetY={cameraTargetY}
+          currentRowIndex={currentRowIndex}
           bodyHeight={bodyHeight}
           layout={layout}
           data={data}
@@ -139,7 +142,7 @@ export function Scoreboard({
 }
 
 function Body({
-  cameraTargetY,
+  currentRowIndex,
   bodyHeight,
   layout,
   data,
@@ -147,7 +150,7 @@ function Body({
   markedUserId,
   markedProblemId
 }: {
-  cameraTargetY: number;
+  currentRowIndex: number;
   bodyHeight: number;
   layout: ReturnType<typeof computeLayout>;
   data: UserRow[];
@@ -157,15 +160,25 @@ function Body({
 }) {
   const speed = useAnimationSpeed();
   const CAMERA_TWEEN_MS = CAMERA_TWEEN_MS_BASE / speed;
+
+  const markedRowIndex =
+    markedUserId === -1 ? -1 : data.findIndex((r) => r.userId === markedUserId);
+  const markedRow = markedRowIndex >= 0 ? data[markedRowIndex] : undefined;
+
+  // Camera framing + clamping live in cameraGeometry (pure + tested).
+  // framingIndex deliberately frames the cursor, not the marked row — see the
+  // camera-monotonicity invariant test for why (no yo-yo on upward moves).
+  const framedIndex = framingIndex(currentRowIndex, markedRowIndex);
+  const contentHeight = data.length * CARD_HEIGHT;
+  const cameraTargetY = useMemo(
+    () => cameraTargetYFor(framedIndex, contentHeight, bodyHeight),
+    [framedIndex, contentHeight, bodyHeight]
+  );
+
   const containerRef = useRef<PixiContainer | null>(null);
-  const tween = useRef<{
-    fromY: number;
-    toY: number;
-    start: number;
-    initialized: boolean;
-  }>({
-    fromY: cameraTargetY,
-    toY: cameraTargetY,
+  const tween = useRef<Tween & { initialized: boolean }>({
+    from: cameraTargetY,
+    to: cameraTargetY,
     start: 0,
     initialized: false
   });
@@ -178,26 +191,48 @@ function Body({
   maxCameraYRef.current = maxCameraY;
 
   const lastSetY = useRef<number | null>(null);
+  const maskRef = useRef<PixiGraphics | null>(null);
 
-  // Callback ref. If @pixi/react re-instantiates the inner container
-  // (StrictMode, theme bridge, future conditional render), the new
-  // Container starts at y=0 — but lastSetY would still hold the previous
-  // written value and skip the next write, silently freezing the camera
-  // at 0. Resetting lastSetY on attach closes that footgun.
-  const attachContainer = useCallback((c: PixiContainer | null) => {
-    containerRef.current = c;
-    lastSetY.current = null;
+  // Wire the body container to its clip mask. Idempotent and called from BOTH
+  // attach callbacks, so the mask is linked regardless of which Pixi node
+  // (re-)instantiates or in what order. The previous design linked only via a
+  // geometry-keyed effect, so a container re-mount with unchanged geometry
+  // lost its mask and let body rows render over the header.
+  const linkMaskAndContainer = useCallback(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    // sortableChildren lets tweening rows lift above static ones via zIndex.
+    container.sortableChildren = true;
+    if (maskRef.current) container.mask = maskRef.current;
   }, []);
+
+  // Callback ref. A re-instantiated container starts at y=0; lastSetY would
+  // still hold the previous written value and skip the next write, freezing
+  // the camera at 0. Reset on attach, then (re)link the mask.
+  const attachContainer = useCallback(
+    (c: PixiContainer | null) => {
+      containerRef.current = c;
+      lastSetY.current = null;
+      linkMaskAndContainer();
+    },
+    [linkMaskAndContainer]
+  );
 
   const job = useAnimationJob(() => {
     const el = containerRef.current;
     if (!el) return;
-    const { fromY, toY, start } = tween.current;
+    const now = performance.now();
     let needsPaint = false;
-    if (fromY !== toY) {
-      const t = Math.min(1, (performance.now() - start) / CAMERA_TWEEN_MS);
-      cameraY.current = fromY + (toY - fromY) * easeOutCubic(t);
-      if (t >= 1) tween.current.fromY = toY;
+    if (isTweening(tween.current)) {
+      cameraY.current = tweenValue(
+        tween.current,
+        now,
+        CAMERA_TWEEN_MS,
+        easeOutCubic
+      );
+      if (isTweenDone(tween.current, now, CAMERA_TWEEN_MS)) {
+        tween.current.from = tween.current.to;
+      }
       needsPaint = true;
     }
     if (cameraY.current > maxCameraYRef.current) {
@@ -213,7 +248,7 @@ function Body({
       lastSetY.current = newY;
       needsPaint = true;
     }
-    if (!needsPaint && tween.current.fromY === tween.current.toY) {
+    if (!needsPaint && !isTweening(tween.current)) {
       job.stop();
     }
   });
@@ -229,33 +264,33 @@ function Body({
       el.y = HEADER_HEIGHT - cameraTargetY;
       lastSetY.current = HEADER_HEIGHT - cameraTargetY;
       tween.current = {
-        fromY: cameraTargetY,
-        toY: cameraTargetY,
+        from: cameraTargetY,
+        to: cameraTargetY,
         start: 0,
         initialized: true
       };
       return;
     }
-    const targetUnchanged = tween.current.toY === cameraTargetY;
-    const inFlight = tween.current.fromY !== tween.current.toY;
-    if (targetUnchanged && !inFlight) return;
+    const targetUnchanged = tween.current.to === cameraTargetY;
+    if (targetUnchanged && !isTweening(tween.current)) return;
+    // Snapshot the CLAMPED on-screen value (cameraY.current), not the raw tween
+    // value — the per-frame clamp can hold it inside content bounds, and
+    // retargeting from the unclamped value would jump.
     tween.current = {
-      fromY: cameraY.current,
-      toY: cameraTargetY,
-      start: performance.now(),
+      ...retarget(cameraY.current, cameraTargetY, performance.now()),
       initialized: true
     };
     job.start();
   }, [cameraTargetY, job, CAMERA_TWEEN_MS]);
 
-  // Resize-driven clamp pass. Also clamps tween.current.toY so the
-  // self-stop check trips immediately instead of spinning 60Hz no-ops for
-  // up to CAMERA_TWEEN_MS while fromY/toY drift apart.
+  // Resize-driven clamp pass. Also clamps tween.current.to so the self-stop
+  // check trips immediately instead of spinning 60Hz no-ops for up to
+  // CAMERA_TWEEN_MS while from/to drift apart.
   useLayoutEffect(() => {
-    if (tween.current.toY > maxCameraY) tween.current.toY = maxCameraY;
-    else if (tween.current.toY < 0) tween.current.toY = 0;
-    if (tween.current.fromY > maxCameraY) tween.current.fromY = maxCameraY;
-    else if (tween.current.fromY < 0) tween.current.fromY = 0;
+    if (tween.current.to > maxCameraY) tween.current.to = maxCameraY;
+    else if (tween.current.to < 0) tween.current.to = 0;
+    if (tween.current.from > maxCameraY) tween.current.from = maxCameraY;
+    else if (tween.current.from < 0) tween.current.from = 0;
     if (cameraY.current > maxCameraY || cameraY.current < 0) job.start();
   }, [maxCameraY, job]);
 
@@ -267,98 +302,63 @@ function Body({
     [layout.totalWidth, bodyHeight]
   );
 
-  // Callback ref so a re-instantiated Graphics is always linked (StrictMode
-  // double-mount, future conditional render). The earlier dep-list approach
-  // failed when the Graphics re-mounted without a geometry change.
-  const maskRef = useRef<PixiGraphics | null>(null);
-  const attachMask = useCallback((g: PixiGraphics | null) => {
-    maskRef.current = g;
-    const container = containerRef.current;
-    if (container && g) {
-      // sortableChildren lets tweening rows lift above static ones via zIndex.
-      // Marked-row-render-last (below) is a belt-and-suspenders cover for
-      // the case where the sort bookkeeping desyncs under rapid cycles.
-      container.sortableChildren = true;
-      container.mask = g;
-    }
-  }, []);
-  // Container can re-mount independently of the mask (StrictMode, theme
-  // bridge); re-assert sortableChildren + mask defensively.
-  useLayoutEffect(() => {
-    const container = containerRef.current;
-    const mask = maskRef.current;
-    if (container) {
-      container.sortableChildren = true;
-      if (mask) container.mask = mask;
-    }
-  }, [layout.totalWidth, bodyHeight]);
+  // Callback ref so a re-instantiated mask Graphics is always re-linked,
+  // independent of the container's mount order (see linkMaskAndContainer).
+  const attachMask = useCallback(
+    (g: PixiGraphics | null) => {
+      maskRef.current = g;
+      linkMaskAndContainer();
+    },
+    [linkMaskAndContainer]
+  );
 
-  // Render marked row LAST. sortableChildren + zIndex isn't reliable enough
-  // under rapid forward/backward cycles — the sortDirty bookkeeping can
-  // desync and the marked row ends up behind a passerby.
-  const markedRowIndex =
-    markedUserId === -1 ? -1 : data.findIndex((r) => r.userId === markedUserId);
-  const markedRow = markedRowIndex >= 0 ? data[markedRowIndex] : undefined;
+  // The marked row is rendered LAST (computed above). sortableChildren +
+  // zIndex isn't reliable enough under rapid forward/backward cycles — the
+  // sortDirty bookkeeping can desync and the marked row ends up behind a
+  // passerby.
 
-  // Mount rows along the entire camera path (prev target → current camera Y
-  // → new target + bodyHeight). A big-jump dispatch (rank 600 → 100) would
-  // otherwise fly over an unmounted range and briefly show a blank stripe.
+  // Track the previous camera target so visibleRowRange can mount the whole
+  // camera path (prev → new target → live cameraY), not just the destination —
+  // a big-jump pan would otherwise fly over an unmounted range.
   const prevCameraTargetY = useRef(cameraTargetY);
   useEffect(() => {
     prevCameraTargetY.current = cameraTargetY;
   }, [cameraTargetY]);
 
-  const minTargetY = Math.min(
-    prevCameraTargetY.current,
-    cameraTargetY,
-    cameraY.current
-  );
-  const maxTargetY =
-    Math.max(prevCameraTargetY.current, cameraTargetY, cameraY.current) +
-    bodyHeight;
-  const firstVisibleIndex = Math.max(
-    0,
-    Math.floor(minTargetY / CARD_HEIGHT) - OVERSCAN
-  );
-  const lastVisibleIndex = Math.min(
-    data.length - 1,
-    Math.ceil(maxTargetY / CARD_HEIGHT) + OVERSCAN
-  );
+  const { first: firstVisibleIndex, last: lastVisibleIndex } = visibleRowRange({
+    prevTargetY: prevCameraTargetY.current,
+    targetY: cameraTargetY,
+    cameraY: cameraY.current,
+    bodyHeight,
+    dataLength: data.length
+  });
   const visibleData =
     data.length === 0
       ? data
       : data.slice(firstVisibleIndex, lastVisibleIndex + 1);
+  const renderList = rowRenderList({
+    visibleData,
+    firstVisibleIndex,
+    markedUserId,
+    markedRow,
+    markedRowIndex
+  });
 
   return (
     <pixiContainer>
       <pixiGraphics ref={attachMask} draw={drawMask} />
       <pixiContainer ref={attachContainer}>
-        {visibleData.map((row, localIdx) => {
-          if (row.userId === markedUserId) return null;
-          const targetIndex = firstVisibleIndex + localIdx;
-          return (
-            <Row
-              key={row.userId}
-              row={row}
-              problems={problems}
-              layout={layout}
-              targetIndex={targetIndex}
-              isCurrent={false}
-              markedProblemId={-1}
-            />
-          );
-        })}
-        {markedRow && (
+        {renderList.map((entry) => (
           <Row
-            key={markedRow.userId}
-            row={markedRow}
+            key={entry.row.userId}
+            row={entry.row}
             problems={problems}
             layout={layout}
-            targetIndex={markedRowIndex}
-            isCurrent={true}
-            markedProblemId={markedProblemId}
+            targetIndex={entry.targetIndex}
+            isCurrent={entry.isMarked}
+            markedProblemId={entry.isMarked ? markedProblemId : -1}
           />
-        )}
+        ))}
       </pixiContainer>
     </pixiContainer>
   );

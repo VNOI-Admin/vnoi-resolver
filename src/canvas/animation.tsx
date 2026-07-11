@@ -34,14 +34,11 @@ export function AnimationRoot({ children }: { children: ReactNode }) {
   // Stable identity so useTick doesn't tear down + re-add the ticker
   // subscription on every parent re-render (theme cycle, viewport resize,
   // speed context update).
-  //
-  // Snapshot the Set before iterating: if a future tick callback stops
-  // another sibling job (not just its own), deletion during for..of
-  // would skip the next yet-unvisited element. Array.from costs ~50ns
-  // per frame at ~50 active jobs.
   const tick = useCallback<TickFn>(() => {
     if (jobs.current.size === 0) return;
-    for (const job of Array.from(jobs.current)) job();
+    // Safe to iterate the live Set: a job that stops itself deletes the
+    // current element, which Set iteration tolerates. No job stops a sibling.
+    for (const job of jobs.current) job();
   }, []);
 
   useTick(tick);

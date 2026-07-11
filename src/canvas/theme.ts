@@ -17,7 +17,6 @@ export type Theme = {
     accent: number;
     text: number;
     textMuted: number;
-    textRank: number;
     pillPending: number;
     // Score gradient, low → high.
     score_0: number;
@@ -80,7 +79,6 @@ const TERMINAL: Theme = buildTheme(
     accent: 0x22d3ee,
     text: 0xe2e8f0,
     textMuted: 0x94a3b8,
-    textRank: 0xf8fafc,
     pillPending: 0x8b5cf6,
     score_0: 0xef4444,
     score_0_10: 0xf97316,
@@ -110,7 +108,6 @@ const NEWSPRINT: Theme = buildTheme(
     accent: 0x1a4ec0,
     text: 0x1f2433,
     textMuted: 0x6d738b,
-    textRank: 0x181b2a,
     pillPending: 0x8b3df0,
     score_0: 0xee2939,
     score_0_10: 0xee5e1a,
@@ -140,7 +137,6 @@ const STUDIO: Theme = buildTheme(
     accent: 0xff7a25,
     text: 0xf5f5f5,
     textMuted: 0x9a9a9a,
-    textRank: 0xfafafa,
     pillPending: 0x9a4dd9,
     score_0: 0xff3838,
     score_0_10: 0xff6b1a,
@@ -208,10 +204,5 @@ export function useTheme(): Theme {
 
 export const TEXT = {
   family:
-    'Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-  size: 14,
-  rankSize: 17,
-  pillSize: 13,
-  denomSize: 10,
-  headerSize: 13
+    'Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif'
 } as const;
