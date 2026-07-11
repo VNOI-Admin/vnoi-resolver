@@ -84,10 +84,19 @@ export function Audience() {
       if (document.visibilityState === 'visible') ping();
     };
     document.addEventListener('visibilitychange', onVisibility);
+    // Announce a deliberate close so the operator flips back to scoreboard
+    // mode immediately instead of waiting out the alive timeout. pagehide,
+    // NOT the effect cleanup: StrictMode's dev double-mount would post a
+    // spurious bye at startup. If the page is bfcached and later restored,
+    // the resumed pings reconnect the operator instantly.
+    const onPageHide = () =>
+      ch.postMessage({ kind: 'bye' } satisfies SyncMessage);
+    window.addEventListener('pagehide', onPageHide);
 
     return () => {
       ch.removeEventListener('message', onMessage);
       document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('pagehide', onPageHide);
       ch.close();
       stopHello();
       clearInterval(aliveInterval);

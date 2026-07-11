@@ -159,7 +159,12 @@ export function useSyncOperator(
 
   // Hysteresis: disconnect needs two consecutive missed polls, reconnect is
   // instant (flip to connected the moment an 'alive' arrives, not on the next
-  // poll tick).
+  // poll tick). A 'bye' (deliberate close, sent on pagehide) short-circuits
+  // the hysteresis entirely — the timeout exists to absorb MISSED pings, and
+  // making the operator stare at a dead console for ~10s after closing the
+  // audience window is the wrong trade. With several audience windows open,
+  // one window's bye can flip the mode for up to one ping interval until a
+  // survivor's next 'alive' reconnects — instant by design.
   const [audienceConnected, setAudienceConnected] = useState(false);
   useEffect(() => {
     const ch = channelRef.current;
@@ -171,6 +176,10 @@ export function useSyncOperator(
         lastSeen = Date.now();
         missedPolls = 0;
         setAudienceConnected(true);
+      } else if (e.data.kind === 'bye') {
+        lastSeen = 0;
+        missedPolls = 2;
+        setAudienceConnected(false);
       }
     };
     ch.addEventListener('message', onMessage);

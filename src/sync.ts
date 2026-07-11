@@ -48,7 +48,8 @@ export type SyncMessage =
   | { kind: 'append'; ceremonyId: number; action: SimAction }
   | { kind: 'theme'; ceremonyId: number; themeKey: ThemeKey }
   | { kind: 'speed'; ceremonyId: number; speed: number }
-  | { kind: 'alive' };
+  | { kind: 'alive' }
+  | { kind: 'bye' };
 
 export function createSyncChannel(): BroadcastChannel | null {
   if (typeof BroadcastChannel === 'undefined') return null;
@@ -93,6 +94,7 @@ export function applySyncMessage(
   switch (msg.kind) {
     case 'hello':
     case 'alive':
+    case 'bye':
       return state;
     case 'init':
       // An init echoing the ceremony we already run is just the operator
