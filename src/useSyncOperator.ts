@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { SimAction } from './lib/resolver';
 import type { InputData, AwardImageMap } from './resolver';
 import type { ThemeKey } from './canvas/theme';
+import type { AwardFit, SafeInsets } from './util/safeArea';
 import {
   ALIVE_POLL_MS,
   ALIVE_TIMEOUT_MS,
@@ -23,6 +24,8 @@ export type OperatorPayload = {
   hideUnofficialContestants: boolean;
   themeKey: ThemeKey;
   speed: number;
+  safeInsets: SafeInsets;
+  awardFit: AwardFit;
 };
 
 // Owns the operator side of the two-window protocol: the BroadcastChannel, the
@@ -86,6 +89,8 @@ export function useSyncOperator(
       hideUnofficialContestants: p.hideUnofficialContestants,
       themeKey: p.themeKey,
       speed: p.speed,
+      safeInsets: p.safeInsets,
+      awardFit: p.awardFit,
       actionLog: actionLogRef.current.slice()
     };
     return {
@@ -147,6 +152,32 @@ export function useSyncOperator(
       speed: payload.speed
     });
   }, [payload.speed]);
+
+  const firstSafeInsetsPaint = useRef(true);
+  useEffect(() => {
+    if (firstSafeInsetsPaint.current) {
+      firstSafeInsetsPaint.current = false;
+      return;
+    }
+    channelRef.current?.postMessage({
+      kind: 'safeInsets',
+      ceremonyId: ceremonyIdRef.current,
+      safeInsets: payload.safeInsets
+    });
+  }, [payload.safeInsets]);
+
+  const firstAwardFitPaint = useRef(true);
+  useEffect(() => {
+    if (firstAwardFitPaint.current) {
+      firstAwardFitPaint.current = false;
+      return;
+    }
+    channelRef.current?.postMessage({
+      kind: 'awardFit',
+      ceremonyId: ceremonyIdRef.current,
+      awardFit: payload.awardFit
+    });
+  }, [payload.awardFit]);
 
   const broadcastAction = useCallback((action: SimAction) => {
     actionLogRef.current.push(action);

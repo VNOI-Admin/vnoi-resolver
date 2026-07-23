@@ -14,6 +14,10 @@ run at 60 fps regardless of dataset size.
 - **Vite** (build / dev server), **TypeScript** in strict mode, **React 19**
 - **PixiJS 8** + **@pixi/react 8** for the canvas scoreboard
 - **canvas-confetti** for award bursts
+- **@fontsource/inter** — self-hosted Inter (400/600/700, Vietnamese subset).
+  Bundled so every machine rasterizes the same font file offline; the
+  scoreboard waits for the faces before mounting so canvas text measurement
+  always matches the paint (a machine-local Inter used to clip name tails)
 - **react-select** for the unofficial-contestants picker
 - **Vitest** for the resolver simulation tests
 - **Yarn 4** as the package manager (binary committed under `.yarn/releases/`)
@@ -45,18 +49,21 @@ Configure frozen time, optionally mark unofficial contestants, hit **Run**.
 
 ### Keyboard shortcuts
 
-| Key     | Action                                                 |
-| ------- | ------------------------------------------------------ |
-| `→`     | Step forward                                           |
-| `←`     | Step back                                              |
-| `1`–`9` | Reveal the Nth pending submission for the current user |
-| `Space` | Play / pause autoplay                                  |
-| `C`     | Toggle autoplay controls bar (scoreboard mode only)    |
-| `F`     | Toggle fullscreen (drops the browser address bar)      |
-| `P`     | Toggle perf / FPS counter                              |
-| `T`     | Cycle colour theme (Newsprint → Terminal → Studio)     |
-| `O`     | Open a second window as the audience display           |
-| `H`     | Toggle help overlay (closes it too)                    |
+| Key          | Action                                                                                                                 |
+| ------------ | ---------------------------------------------------------------------------------------------------------------------- |
+| `→`          | Step forward                                                                                                           |
+| `←`          | Step back                                                                                                              |
+| `1`–`9`      | Reveal the Nth pending submission for the current user                                                                 |
+| `Space`      | Play / pause autoplay                                                                                                  |
+| `C`          | Toggle autoplay controls bar (scoreboard mode only)                                                                    |
+| `F`          | Toggle fullscreen (drops the browser address bar)                                                                      |
+| `P`          | Toggle perf / FPS counter                                                                                              |
+| `T`          | Cycle colour theme (Newsprint → Terminal → Studio)                                                                     |
+| `Shift+↓↑→←` | Safe margins, top (`↓`/`↑`) and left (`→`/`←`) edges — the arrow is the direction the edge moves; inward = more margin |
+| `⌥+↑↓←→`     | Safe margins, bottom (`↑`/`↓`) and right (`←`/`→`) edges — same rule                                                   |
+| `I`          | Toggle award image fit: fill (stretch, default) ↔ contain (letterbox)                                                  |
+| `O`          | Open a second window as the audience display                                                                           |
+| `H`          | Toggle help overlay (closes it too)                                                                                    |
 
 ### Themes
 
@@ -117,6 +124,35 @@ Look at the audience window for the live scoreboard view; look at the
 operator window for what's about to happen. (If you don't open an audience
 window, the operator window stays in scoreboard mode and behaves like
 before.)
+
+### Ultrawide / hall LED walls
+
+Hall LED walls are often much wider than 16:9 (and sometimes partially
+covered by the stage curtain). Three mechanisms keep the show intact there:
+
+- **Pillarboxing** — whenever the visible box (the viewport minus any safe
+  margins) is wider than 16:9, the board is clamped to a 16:9-ish content
+  frame (never narrower than 1600px) and centered in it, with plain theme
+  background on the sides, instead of stretching the name column and pills
+  across the full width. With no margins set, screens at or narrower than
+  16:9 render exactly as before; note that top/bottom margins shorten the
+  visible box, so adding them on a 16:9 screen can engage the clamp — the
+  frame follows the hole the audience actually sees.
+- **Safe margins (all four edges)** — if a curtain valance covers the top of
+  the wall (or drapes cover a side, or the bottom is cut off), nudge that
+  edge inward on the operator window: the arrow key is the direction the
+  edge moves, `Shift` drives the top/left edges, `⌥` the bottom/right ones —
+  e.g. `Shift+↓` pushes the top edge down until the header clears the
+  curtain, `⌥+↑` raises the bottom edge. The board and award art render
+  inside the safe box; the bands outside are just background. Values persist
+  in `localStorage` and sync live to the audience window.
+- **Award image fit** — `I` toggles the award art between `fill` (stretch to
+  the safe box, default) and `contain` (letterbox, keeps the original aspect
+  ratio). Also persisted and synced.
+
+If the wall itself stretches a 16:9 input to its native shape, no app-side
+fix applies — ask the venue AV to switch the wall processor to 1:1 pixel
+mapping (or pillarbox) mode.
 
 ### Multi-screen ceremony
 

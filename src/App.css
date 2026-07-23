@@ -641,6 +641,7 @@ body.audience-idle * {
 .award-overlay {
   position: fixed;
   inset: 0;
+  box-sizing: border-box; /* padding = safe-area bands, set inline */
   display: flex;
   align-items: center;
   justify-content: center;
@@ -662,9 +663,10 @@ body.audience-idle * {
 }
 
 .award-overlay img {
-  width: 100vw;
-  height: 100vh;
-  object-fit: fill;
+  /* object-fit comes inline from the awardFit config: fill (stretch to the
+     safe box, default) or contain (letterbox), toggled with I. */
+  width: 100%;
+  height: 100%;
   display: block;
   animation: award-scale 0.5s cubic-bezier(0.22, 1, 0.36, 1);
 }

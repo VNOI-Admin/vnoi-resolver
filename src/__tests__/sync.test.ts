@@ -16,6 +16,8 @@ function payload(actionLog: SimAction[]): InitPayload {
     hideUnofficialContestants: false,
     themeKey: 'newsprint',
     speed: 1,
+    safeInsets: { top: 0, right: 0, bottom: 0, left: 0 },
+    awardFit: 'fill',
     actionLog
   };
 }
@@ -137,6 +139,41 @@ describe('applySyncMessage', () => {
       themeKey: 'studio'
     });
     expect(stale).toBe(s);
+  });
+
+  it('adopts safeInsets/awardFit from init and gates the deltas on the ceremony id', () => {
+    const insets = { top: 80, right: 0, bottom: 20, left: 40 };
+    let s = applySyncMessage(initialAudienceSyncState('newsprint'), {
+      kind: 'init',
+      ceremonyId: 3,
+      payload: { ...payload([]), safeInsets: insets, awardFit: 'contain' }
+    });
+    expect(s.safeInsets).toEqual(insets);
+    expect(s.awardFit).toBe('contain');
+    s = applySyncMessage(s, {
+      kind: 'safeInsets',
+      ceremonyId: 3,
+      safeInsets: { ...insets, top: 120 }
+    });
+    expect(s.safeInsets.top).toBe(120);
+    s = applySyncMessage(s, {
+      kind: 'awardFit',
+      ceremonyId: 3,
+      awardFit: 'fill'
+    });
+    expect(s.awardFit).toBe('fill');
+    const stale = applySyncMessage(s, {
+      kind: 'safeInsets',
+      ceremonyId: 2,
+      safeInsets: { top: 0, right: 0, bottom: 0, left: 0 }
+    });
+    expect(stale).toBe(s);
+    const staleFit = applySyncMessage(s, {
+      kind: 'awardFit',
+      ceremonyId: 2,
+      awardFit: 'contain'
+    });
+    expect(staleFit).toBe(s);
   });
 
   it('is a no-op (same reference) for hello / alive', () => {

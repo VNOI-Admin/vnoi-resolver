@@ -16,6 +16,7 @@ import {
   type SyncMessage
 } from './sync';
 import type { SimAction } from './lib/resolver';
+import type { AwardFit, SafeInsets } from './util/safeArea';
 import { toggleFullscreen } from './util/fullscreen';
 import { fireAwardConfetti } from './util/confetti';
 import { ErrorBoundary } from './ErrorBoundary';
@@ -37,7 +38,8 @@ export function Audience() {
   const [sync, dispatch] = useReducer(syncReducer, undefined, () =>
     initialAudienceSyncState(loadThemeKey())
   );
-  const { init, themeKey, speed, actionLog, localCeremonyId } = sync;
+  const { init, themeKey, speed, safeInsets, awardFit, actionLog } = sync;
+  const { localCeremonyId } = sync;
 
   // Re-init handshake, fired on mount and on ErrorBoundary reset: restart the
   // hello loop so the operator answers with a fresh init.
@@ -165,7 +167,13 @@ export function Audience() {
           // otherwise an error state would survive the new ceremony and the
           // card could only ever be cleared by hand at the projector.
           <ErrorBoundary key={localCeremonyId} onReset={handleErrorReset}>
-            <AudienceLive init={init} actionLog={actionLog} speed={speed} />
+            <AudienceLive
+              init={init}
+              actionLog={actionLog}
+              speed={speed}
+              safeInsets={safeInsets}
+              awardFit={awardFit}
+            />
           </ErrorBoundary>
         ) : (
           <div className="audience-waiting">
@@ -209,11 +217,15 @@ export function Audience() {
 function AudienceLive({
   init,
   actionLog,
-  speed
+  speed,
+  safeInsets,
+  awardFit
 }: {
   init: InitPayload;
   actionLog: readonly SimAction[];
   speed: number;
+  safeInsets: SafeInsets;
+  awardFit: AwardFit;
 }) {
   const filteredInput = useMemo(
     () =>
@@ -281,6 +293,8 @@ function AudienceLive({
       markedProblemId={markedProblemId}
       imageSrc={imageSrc}
       speed={speed}
+      safeInsets={safeInsets}
+      awardFit={awardFit}
     />
   );
 }

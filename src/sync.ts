@@ -6,7 +6,8 @@
 // replaying the same actions on the same data.
 //
 // Handshake: audience says `hello` every 2s until it receives `init`. After
-// init, the operator pushes `append` / `theme` / `speed` as events occur.
+// init, the operator pushes `append` / `theme` / `speed` / `safeInsets` /
+// `awardFit` as events occur.
 // The operator also pushes unsolicited `init` on dataset / partition change
 // so a live audience picks up the new ceremony without a refresh.
 //
@@ -20,6 +21,7 @@
 import type { SimAction } from './lib/resolver';
 import type { InputData, AwardImageMap } from './resolver';
 import type { ThemeKey } from './canvas/theme';
+import { ZERO_INSETS, type AwardFit, type SafeInsets } from './util/safeArea';
 
 export const HELLO_RETRY_MS = 2000;
 // Timeout is wider than the ping interval (8s vs 2s) to absorb consecutive
@@ -39,6 +41,8 @@ export type InitPayload = {
   hideUnofficialContestants: boolean;
   themeKey: ThemeKey;
   speed: number;
+  safeInsets: SafeInsets;
+  awardFit: AwardFit;
   actionLog: SimAction[];
 };
 
@@ -48,6 +52,8 @@ export type SyncMessage =
   | { kind: 'append'; ceremonyId: number; action: SimAction }
   | { kind: 'theme'; ceremonyId: number; themeKey: ThemeKey }
   | { kind: 'speed'; ceremonyId: number; speed: number }
+  | { kind: 'safeInsets'; ceremonyId: number; safeInsets: SafeInsets }
+  | { kind: 'awardFit'; ceremonyId: number; awardFit: AwardFit }
   | { kind: 'alive' }
   | { kind: 'bye' };
 
@@ -71,6 +77,8 @@ export type AudienceSyncState = {
   init: InitPayload | null;
   themeKey: ThemeKey;
   speed: number;
+  safeInsets: SafeInsets;
+  awardFit: AwardFit;
   actionLog: readonly SimAction[];
 };
 
@@ -83,6 +91,8 @@ export function initialAudienceSyncState(
     init: null,
     themeKey,
     speed: 1,
+    safeInsets: ZERO_INSETS,
+    awardFit: 'fill',
     actionLog: []
   };
 }
@@ -111,14 +121,21 @@ export function applySyncMessage(
         init: msg.payload,
         themeKey: msg.payload.themeKey,
         speed: msg.payload.speed,
+        safeInsets: msg.payload.safeInsets,
+        awardFit: msg.payload.awardFit,
         actionLog: msg.payload.actionLog.slice()
       };
     case 'theme':
     case 'speed':
+    case 'safeInsets':
+    case 'awardFit':
     case 'append':
       if (msg.ceremonyId !== state.operatorCeremonyId) return state;
       if (msg.kind === 'theme') return { ...state, themeKey: msg.themeKey };
       if (msg.kind === 'speed') return { ...state, speed: msg.speed };
+      if (msg.kind === 'safeInsets')
+        return { ...state, safeInsets: msg.safeInsets };
+      if (msg.kind === 'awardFit') return { ...state, awardFit: msg.awardFit };
       return { ...state, actionLog: [...state.actionLog, msg.action] };
   }
 }

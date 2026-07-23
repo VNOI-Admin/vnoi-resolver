@@ -21,6 +21,16 @@ import {
   readUrlConfig
 } from './util/urlConfig';
 import { useSyncOperator } from './useSyncOperator';
+import {
+  SAFE_INSET_STEP_PX,
+  loadAwardFit,
+  loadSafeInsets,
+  nudgeInset,
+  saveAwardFit,
+  saveSafeInsets,
+  type AwardFit,
+  type SafeInsets
+} from './util/safeArea';
 
 function App() {
   const role = useMemo(readDisplayRole, []);
@@ -51,6 +61,41 @@ function Operator() {
     }
   }, [themeKey]);
   useKeyPress('t', () => setThemeKey(cycleThemeKey));
+
+  // Safe-area insets: shift each board edge inward past a physical
+  // obstruction on the hall wall (curtain valance on top, side drapes, a
+  // cut-off bottom). Nudged live while looking at the wall — the arrow is
+  // the direction the edge moves, Shift drives the top/left edges, ⌥/Alt
+  // the bottom/right ones — and synced to the audience window like the
+  // theme. Chords are kept modifier-disjoint (shift:true,alt:false vs
+  // shift:false,alt:true) so they never double-fire, and the bare arrows
+  // (step) opt out of both in OperatorConsole.
+  const [safeInsets, setSafeInsets] = useState<SafeInsets>(loadSafeInsets);
+  useEffect(() => {
+    saveSafeInsets(safeInsets);
+  }, [safeInsets]);
+  const nudge = (edge: keyof SafeInsets, delta: number) => () =>
+    setSafeInsets((v) => nudgeInset(v, edge, delta));
+  const SHIFT = { shift: true, alt: false };
+  const ALT = { shift: false, alt: true };
+  useKeyPress('ArrowDown', nudge('top', SAFE_INSET_STEP_PX), true, SHIFT);
+  useKeyPress('ArrowUp', nudge('top', -SAFE_INSET_STEP_PX), true, SHIFT);
+  useKeyPress('ArrowRight', nudge('left', SAFE_INSET_STEP_PX), true, SHIFT);
+  useKeyPress('ArrowLeft', nudge('left', -SAFE_INSET_STEP_PX), true, SHIFT);
+  useKeyPress('ArrowUp', nudge('bottom', SAFE_INSET_STEP_PX), true, ALT);
+  useKeyPress('ArrowDown', nudge('bottom', -SAFE_INSET_STEP_PX), true, ALT);
+  useKeyPress('ArrowLeft', nudge('right', SAFE_INSET_STEP_PX), true, ALT);
+  useKeyPress('ArrowRight', nudge('right', -SAFE_INSET_STEP_PX), true, ALT);
+
+  // Award image fit: fill (stretch to the safe box, default) ↔ contain
+  // (letterbox). Persisted + synced like the theme.
+  const [awardFit, setAwardFit] = useState<AwardFit>(loadAwardFit);
+  useEffect(() => {
+    saveAwardFit(awardFit);
+  }, [awardFit]);
+  useKeyPress('i', () =>
+    setAwardFit((f) => (f === 'fill' ? 'contain' : 'fill'))
+  );
 
   const [speed, setSpeed] = useState(1);
 
@@ -99,7 +144,9 @@ function Operator() {
       unofficialContestants,
       hideUnofficialContestants,
       themeKey,
-      speed
+      speed,
+      safeInsets,
+      awardFit
     },
     dataVersion
   );
@@ -148,6 +195,8 @@ function Operator() {
             onCycleTheme={() => setThemeKey(cycleThemeKey)}
             speed={speed}
             setSpeed={setSpeed}
+            safeInsets={safeInsets}
+            awardFit={awardFit}
             audienceConnected={audienceConnected}
             onAction={broadcastAction}
           />

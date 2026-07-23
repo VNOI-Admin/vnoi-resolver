@@ -629,6 +629,13 @@ __metadata:
   languageName: node
   linkType: hard
 
+"@fontsource/inter@npm:^5.2.8":
+  version: 5.2.8
+  resolution: "@fontsource/inter@npm:5.2.8"
+  checksum: 10c0/f737dd50005e4809887ba55ae0c9b7174216d6d14875d17a4fbb9a0ad75dec4265928b805a43fe16a23f14a878f1974a398bbfc84ad65c79fc4d4b9c3ea154e1
+  languageName: node
+  linkType: hard
+
 "@humanfs/core@npm:^0.19.2":
   version: 0.19.2
   resolution: "@humanfs/core@npm:0.19.2"
@@ -4776,6 +4783,7 @@ __metadata:
   resolution: "vnoi-resolver@workspace:."
   dependencies:
     "@eslint/js": "npm:^9.15.0"
+    "@fontsource/inter": "npm:^5.2.8"
     "@pixi/react": "npm:^8.0.0"
     "@types/canvas-confetti": "npm:^1.9.0"
     "@types/node": "npm:^20.10.0"

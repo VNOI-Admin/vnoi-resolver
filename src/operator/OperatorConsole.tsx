@@ -21,6 +21,7 @@ import type { ThemeKey } from '../canvas/theme';
 import { LiveScoreboard } from '../canvas/LiveScoreboard';
 import { toggleFullscreen } from '../util/fullscreen';
 import { fireAwardConfetti } from '../util/confetti';
+import type { AwardFit, SafeInsets } from '../util/safeArea';
 import { StatusStrip } from './StatusStrip';
 import { NowPane, NextPane, QueuePane } from './Panes';
 import { Timeline, Transport, type SeekControls } from './BottomBand';
@@ -56,6 +57,8 @@ export function OperatorConsole({
   onCycleTheme,
   speed,
   setSpeed,
+  safeInsets,
+  awardFit,
   audienceConnected,
   onAction
 }: {
@@ -68,6 +71,8 @@ export function OperatorConsole({
   onCycleTheme: () => void;
   speed: number;
   setSpeed: (n: number) => void;
+  safeInsets: SafeInsets;
+  awardFit: AwardFit;
   audienceConnected: boolean;
   onAction?: (action: SimAction) => void;
 }) {
@@ -256,8 +261,11 @@ export function OperatorConsole({
     if (idx >= livePendingCount) return;
     manualStep(idx);
   };
-  useKeyPress('ArrowLeft', manualRollback, shortcutsEnabled);
-  useKeyPress('ArrowRight', manualStep, shortcutsEnabled);
+  // Bare arrows only — Shift/⌥+arrow chords belong to the safe-margin
+  // nudges bound in App.tsx.
+  const BARE = { shift: false, alt: false };
+  useKeyPress('ArrowLeft', manualRollback, shortcutsEnabled, BARE);
+  useKeyPress('ArrowRight', manualStep, shortcutsEnabled, BARE);
   useKeyPress('1', chooserKey(0), chooserKeysEnabled);
   useKeyPress('2', chooserKey(1), chooserKeysEnabled);
   useKeyPress('3', chooserKey(2), chooserKeysEnabled);
@@ -394,6 +402,8 @@ export function OperatorConsole({
           imageSrc={imageSrc}
           playing={playing}
           speed={speed}
+          safeInsets={safeInsets}
+          awardFit={awardFit}
           showControls={showControls}
           setPlaying={setPlaying}
           setSpeed={setSpeed}
@@ -419,6 +429,8 @@ function ScoreboardBody({
   imageSrc,
   playing,
   speed,
+  safeInsets,
+  awardFit,
   showControls,
   setPlaying,
   setSpeed
@@ -431,6 +443,8 @@ function ScoreboardBody({
   imageSrc: string | null;
   playing: boolean;
   speed: number;
+  safeInsets: SafeInsets;
+  awardFit: AwardFit;
   showControls: boolean;
   setPlaying: (updater: (p: boolean) => boolean) => void;
   setSpeed: (n: number) => void;
@@ -445,6 +459,8 @@ function ScoreboardBody({
         markedProblemId={markedProblemId}
         imageSrc={imageSrc}
         speed={speed}
+        safeInsets={safeInsets}
+        awardFit={awardFit}
       />
       {showControls && (
         <div className="controls">
@@ -716,6 +732,21 @@ function HelpOverlay({
             <kbd>T</kbd>
           </dt>
           <dd>Cycle color theme</dd>
+          <dt>
+            <kbd>Shift</kbd>+<kbd>↓↑→←</kbd>
+          </dt>
+          <dd>
+            Safe margins, top / left edge: the arrow is the direction the edge
+            moves (inward = more margin, for a curtain covering that edge)
+          </dd>
+          <dt>
+            <kbd>⌥</kbd>+<kbd>↑↓←→</kbd>
+          </dt>
+          <dd>Safe margins, bottom / right edge (same rule)</dd>
+          <dt>
+            <kbd>I</kbd>
+          </dt>
+          <dd>Toggle award image fit: fill (stretch, default) ↔ contain</dd>
           <dt>
             <kbd>O</kbd>
           </dt>

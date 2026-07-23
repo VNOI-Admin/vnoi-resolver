@@ -204,5 +204,9 @@ export function useTheme(): Theme {
 
 export const TEXT = {
   family:
-    'Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif'
+    'Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+  // The one webfont in the stack (bundled via @fontsource in index.tsx);
+  // fonts.ts waits on THIS family — the rest are always-present system
+  // fallbacks that document.fonts.load can't meaningfully wait for.
+  loadFamily: 'Inter'
 } as const;

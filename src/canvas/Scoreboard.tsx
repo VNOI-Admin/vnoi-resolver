@@ -13,7 +13,13 @@ import type {
   Graphics as PixiGraphics
 } from 'pixi.js';
 import type { InputProblem, UserRow } from '../lib/resolver';
-import { HEADER_HEIGHT, CARD_HEIGHT, computeLayout } from './layout';
+import {
+  HEADER_HEIGHT,
+  CARD_HEIGHT,
+  boardContentWidth,
+  computeLayout
+} from './layout';
+import { ZERO_INSETS, type SafeInsets } from '../util/safeArea';
 import { Header } from './Header';
 import { Row } from './Row';
 import { useTheme } from './theme';
@@ -97,22 +103,42 @@ export function Scoreboard({
   problems,
   currentRowIndex,
   markedUserId,
-  markedProblemId
+  markedProblemId,
+  safeInsets = ZERO_INSETS
 }: {
   data: UserRow[];
   problems: InputProblem[];
   currentRowIndex: number;
   markedUserId: number;
   markedProblemId: number;
+  safeInsets?: SafeInsets;
 }) {
   const theme = useTheme();
   const viewport = useViewportSize();
-  const layout = useMemo(
-    () => computeLayout(viewport.width, problems.length),
-    [viewport.width, problems.length]
-  );
 
-  const bodyHeight = Math.max(0, viewport.height - HEADER_HEIGHT);
+  // Safe-area bands: physical obstructions (curtain valance, side drapes)
+  // cover edges of the hall wall, so the board renders inside the inset box
+  // and the bands outside it are just canvas background.
+  const contentHeight = Math.max(
+    0,
+    viewport.height - safeInsets.top - safeInsets.bottom
+  );
+  const availWidth = Math.max(
+    0,
+    viewport.width - safeInsets.left - safeInsets.right
+  );
+  const boardWidth = boardContentWidth(availWidth, contentHeight);
+  const layout = useMemo(
+    () => computeLayout(boardWidth, problems.length),
+    [boardWidth, problems.length]
+  );
+  // Center the pillarboxed board inside the safe box; a many-problem
+  // overflow (totalWidth wider than the box) stays left-aligned like before.
+  const offsetX =
+    safeInsets.left +
+    Math.max(0, Math.floor((availWidth - layout.totalWidth) / 2));
+
+  const bodyHeight = Math.max(0, contentHeight - HEADER_HEIGHT);
 
   return (
     <Application
@@ -126,16 +152,18 @@ export function Scoreboard({
     >
       <BackgroundSync color={theme.colors.bg} />
       <AnimationRoot>
-        <Body
-          currentRowIndex={currentRowIndex}
-          bodyHeight={bodyHeight}
-          layout={layout}
-          data={data}
-          problems={problems}
-          markedUserId={markedUserId}
-          markedProblemId={markedProblemId}
-        />
-        <Header problems={problems} layout={layout} />
+        <pixiContainer x={offsetX} y={safeInsets.top}>
+          <Body
+            currentRowIndex={currentRowIndex}
+            bodyHeight={bodyHeight}
+            layout={layout}
+            data={data}
+            problems={problems}
+            markedUserId={markedUserId}
+            markedProblemId={markedProblemId}
+          />
+          <Header problems={problems} layout={layout} />
+        </pixiContainer>
       </AnimationRoot>
     </Application>
   );
