@@ -17,20 +17,16 @@ export type Theme = {
     accent: number;
     text: number;
     textMuted: number;
+    // Semantic pill palette. Deliberately FLAT, not a per-percentage
+    // gradient: from ceremony distance a 12-bucket score ramp reads as
+    // noise (the same 1500 points showed lime on one problem and olive on
+    // another, purely because the problems' maxima differed). Four colours
+    // carry all the meaning the audience needs: solved / partial / failed /
+    // pending — untried renders as a ghost outline, no fill colour.
     pillPending: number;
-    // Score gradient, low → high.
-    score_0: number;
-    score_0_10: number;
-    score_10_20: number;
-    score_20_30: number;
-    score_30_40: number;
-    score_40_50: number;
-    score_50_60: number;
-    score_60_70: number;
-    score_70_80: number;
-    score_80_90: number;
-    score_90_100: number;
-    score_100: number;
+    pillFail: number;
+    pillPartial: number;
+    pillSolved: number;
   };
   // Each theme picks colour + alpha that BRIGHTENS its row against its own
   // background. Accent-at-0.32 darkens light surfaces, so light themes pick
@@ -39,37 +35,30 @@ export type Theme = {
   pillColorForClass(scoreClass: string, isPending: boolean): number;
 };
 
+// scoring.ts still emits the fine-grained score_N_M classes; themes just
+// collapse every intermediate bucket onto one partial colour.
+const MID_BUCKET_RE = /^score_\d+_\d+$/;
+
 function buildTheme(
   name: string,
   colors: Theme['colors'],
   markedRow: Theme['markedRow']
 ): Theme {
-  const byClass: Record<string, number> = {
-    score_0: colors.score_0,
-    score_0_10: colors.score_0_10,
-    score_10_20: colors.score_10_20,
-    score_20_30: colors.score_20_30,
-    score_30_40: colors.score_30_40,
-    score_40_50: colors.score_40_50,
-    score_50_60: colors.score_50_60,
-    score_60_70: colors.score_60_70,
-    score_70_80: colors.score_70_80,
-    score_80_90: colors.score_80_90,
-    score_90_100: colors.score_90_100,
-    score_100: colors.score_100
-  };
   return {
     name,
     colors,
     markedRow,
     pillColorForClass(scoreClass, isPending) {
       if (isPending) return colors.pillPending;
-      return byClass[scoreClass] ?? colors.score_0;
+      if (scoreClass === 'score_100') return colors.pillSolved;
+      if (MID_BUCKET_RE.test(scoreClass)) return colors.pillPartial;
+      // score_0 and anything unknown: fail red (defensive fallback).
+      return colors.pillFail;
     }
   };
 }
 
-// Terminal: dark navy + cyan, Tailwind score ramp.
+// Terminal: dark navy + cyan.
 const TERMINAL: Theme = buildTheme(
   'Terminal',
   {
@@ -80,25 +69,15 @@ const TERMINAL: Theme = buildTheme(
     text: 0xe2e8f0,
     textMuted: 0x94a3b8,
     pillPending: 0x8b5cf6,
-    score_0: 0xef4444,
-    score_0_10: 0xf97316,
-    score_10_20: 0xfb923c,
-    score_20_30: 0xfbbf24,
-    score_30_40: 0xfacc15,
-    score_40_50: 0xeab308,
-    score_50_60: 0xa3e635,
-    score_60_70: 0x84cc16,
-    score_70_80: 0x4ade80,
-    score_80_90: 0x22c55e,
-    score_90_100: 0x16a34a,
-    score_100: 0x10b981
+    pillFail: 0xef4444,
+    pillPartial: 0xfbbf24,
+    pillSolved: 0x10b981
   },
   { color: 0x22d3ee, alpha: 0.32 }
 );
 
-// Newsprint: paper-white with cobalt accent. Score gradient lightness
-// capped ≤ 0.73 so white pill labels stay legible across the whole ramp
-// (the perennial yellow-with-white-text problem).
+// Newsprint: paper-white with cobalt accent. Pill lightness capped so white
+// pill labels stay legible (the perennial yellow-with-white-text problem).
 const NEWSPRINT: Theme = buildTheme(
   'Newsprint',
   {
@@ -109,18 +88,9 @@ const NEWSPRINT: Theme = buildTheme(
     text: 0x1f2433,
     textMuted: 0x6d738b,
     pillPending: 0x8b3df0,
-    score_0: 0xee2939,
-    score_0_10: 0xee5e1a,
-    score_10_20: 0xee801f,
-    score_20_30: 0xd8932a,
-    score_30_40: 0xc7a128,
-    score_40_50: 0xa5a920,
-    score_50_60: 0x6bb22b,
-    score_60_70: 0x36b134,
-    score_70_80: 0x1ba946,
-    score_80_90: 0x149b45,
-    score_90_100: 0x128943,
-    score_100: 0x0baa53
+    pillFail: 0xee2939,
+    pillPartial: 0xd8932a,
+    pillSolved: 0x0baa53
   },
   // Highlighter yellow, not cobalt — cobalt-on-white would DARKEN the row
   // (lightness 0.42 < surface 0.985), opposite of "highlight".
@@ -138,18 +108,9 @@ const STUDIO: Theme = buildTheme(
     text: 0xf5f5f5,
     textMuted: 0x9a9a9a,
     pillPending: 0x9a4dd9,
-    score_0: 0xff3838,
-    score_0_10: 0xff6b1a,
-    score_10_20: 0xff8c1a,
-    score_20_30: 0xffb800,
-    score_30_40: 0xffd000,
-    score_40_50: 0xf0e000,
-    score_50_60: 0xa0e835,
-    score_60_70: 0x76d428,
-    score_70_80: 0x3fc864,
-    score_80_90: 0x1eb472,
-    score_90_100: 0x14a366,
-    score_100: 0x00e673
+    pillFail: 0xff3838,
+    pillPartial: 0xffb800,
+    pillSolved: 0x00e673
   },
   { color: 0xff7a25, alpha: 0.32 }
 );

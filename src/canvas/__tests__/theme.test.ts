@@ -17,18 +17,9 @@ const REQUIRED_COLOR_KEYS: (keyof Theme['colors'])[] = [
   'text',
   'textMuted',
   'pillPending',
-  'score_0',
-  'score_0_10',
-  'score_10_20',
-  'score_20_30',
-  'score_30_40',
-  'score_40_50',
-  'score_50_60',
-  'score_60_70',
-  'score_70_80',
-  'score_80_90',
-  'score_90_100',
-  'score_100'
+  'pillFail',
+  'pillPartial',
+  'pillSolved'
 ];
 
 const isValidColor = (n: unknown): boolean =>
@@ -62,18 +53,33 @@ describe('theme registry', () => {
     expect(theme.pillColorForClass('whatever', true)).toBe(
       theme.colors.pillPending
     );
-    // Each known score class maps to its bucket.
     expect(theme.pillColorForClass('score_100', false)).toBe(
-      theme.colors.score_100
+      theme.colors.pillSolved
     );
     expect(theme.pillColorForClass('score_0', false)).toBe(
-      theme.colors.score_0
+      theme.colors.pillFail
     );
-    // Unknown class falls back to score_0 (defensive, see buildTheme).
+    // Unknown class falls back to fail red (defensive, see buildTheme).
     expect(theme.pillColorForClass('not_a_class', false)).toBe(
-      theme.colors.score_0
+      theme.colors.pillFail
     );
   });
+
+  it.each(THEME_KEYS)(
+    '%s collapses EVERY intermediate score bucket onto the one partial colour',
+    (key) => {
+      // The projector-legibility invariant: the same partial verdict must
+      // never render as two different hues just because the problems' maxima
+      // differ. All 10 scoring.ts mid buckets → pillPartial.
+      const theme = THEMES[key];
+      for (let lo = 0; lo < 100; lo += 10) {
+        expect(
+          theme.pillColorForClass(`score_${lo}_${lo + 10}`, false),
+          `score_${lo}_${lo + 10}`
+        ).toBe(theme.colors.pillPartial);
+      }
+    }
+  );
 
   it('DEFAULT_THEME_KEY is a valid theme', () => {
     expect(THEME_KEYS).toContain(DEFAULT_THEME_KEY);

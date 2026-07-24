@@ -75,7 +75,7 @@ Three ceremony themes, switchable any time via `T`. Choice persists in `localSto
 | **Terminal**  | dark navy   | cyan            | CRT phosphor, polished dev-tool feel        |
 | **Studio**    | pure black  | bright orange   | primetime broadcast, dark studio set        |
 
-Each theme has its own score-gradient ramp + marked-row tint (highlighter yellow on Newsprint, accent overlay on the dark themes). All HTML chrome (loading form, share modal, help overlay, autoplay controls, FPS HUD) re-tints from a single set of CSS variables driven by the active theme.
+Pills use a flat semantic palette per theme — green = solved, one amber = any partial score, red = failed, purple = pending, ghost outline = untried — rather than a per-percentage gradient, which read as noise from ceremony distance (the same 1500 points showed two different hues when the problems' maxima differed). Each theme also picks a marked-row tint (highlighter yellow on Newsprint, accent overlay on the dark themes). All HTML chrome (loading form, share modal, help overlay, autoplay controls, FPS HUD) re-tints from a single set of CSS variables driven by the active theme.
 
 ### Operator window: two modes
 
