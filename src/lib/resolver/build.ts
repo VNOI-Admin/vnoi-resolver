@@ -135,16 +135,38 @@ export function buildInitialState({
 
     for (const problem of inputData.problems) {
       const problemId = problem.problemId;
+      // Pending means "has ANY attempt at/after the freeze", NOT "the
+      // score-altering chain moved". A partial scored before the freeze
+      // followed by only non-improving attempts after it (vnoicup26 F:
+      // 750 pre-freeze, then four WAs) must still freeze as "750?" and get
+      // its reveal moment — comparing last-altering ids alone silently
+      // resolved it at build time and skipped the suspense.
+      const attempts = privateUser.submissionIdsByProblemId[problemId] ?? [];
+      let lastPostFreezeId: number | undefined;
+      for (const id of attempts) {
+        const sub = submissionById[id];
+        // Ids ascend with time (parse enforces monotonicity), so the last
+        // match is the latest post-freeze attempt.
+        if (sub && sub.time >= frozenTime) lastPostFreezeId = id;
+      }
+      if (lastPostFreezeId === undefined) continue;
+
       const publicLast =
         publicUser.lastAlteringScoreSubmissionIdByProblemId[problemId];
       const privateLast =
         privateUser.lastAlteringScoreSubmissionIdByProblemId[problemId];
-      if (publicLast !== privateLast && privateLast !== undefined) {
-        publicUser.pendingSubmissionIds.push(privateLast);
-        publicUser.status[problemId] =
-          (publicUser.status[problemId] ?? ProblemAttemptStatus.UNATTEMPTED) |
-          ProblemAttemptStatus.PENDING;
-      }
+      // Resolve the submission that lands the final score when the score
+      // moved after the freeze; otherwise the last post-freeze attempt —
+      // applying it is a no-op on points, so the reveal flips "750?" to 750
+      // and the board stays put.
+      const pendingId =
+        privateLast !== undefined && privateLast !== publicLast
+          ? privateLast
+          : lastPostFreezeId;
+      publicUser.pendingSubmissionIds.push(pendingId);
+      publicUser.status[problemId] =
+        (publicUser.status[problemId] ?? ProblemAttemptStatus.UNATTEMPTED) |
+        ProblemAttemptStatus.PENDING;
     }
 
     publicUser.pendingSubmissionIds = sortBy(
