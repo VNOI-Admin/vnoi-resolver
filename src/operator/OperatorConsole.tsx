@@ -21,7 +21,7 @@ import type { ThemeKey } from '../canvas/theme';
 import { LiveScoreboard } from '../canvas/LiveScoreboard';
 import { toggleFullscreen } from '../util/fullscreen';
 import { fireAwardConfetti } from '../util/confetti';
-import type { AwardFit, SafeInsets } from '../util/safeArea';
+import { ZERO_INSETS, type AwardFit, type SafeInsets } from '../util/safeArea';
 import { StatusStrip } from './StatusStrip';
 import { NowPane, NextPane, QueuePane } from './Panes';
 import { Timeline, Transport, type SeekControls } from './BottomBand';
@@ -59,6 +59,7 @@ export function OperatorConsole({
   setSpeed,
   safeInsets,
   awardFit,
+  onToggleAwardFit,
   audienceConnected,
   onAction
 }: {
@@ -71,8 +72,11 @@ export function OperatorConsole({
   onCycleTheme: () => void;
   speed: number;
   setSpeed: (n: number) => void;
+  // Display-only here: safe margins render on the audience window alone,
+  // the console just reads them out in the status strip.
   safeInsets: SafeInsets;
   awardFit: AwardFit;
+  onToggleAwardFit: () => void;
   audienceConnected: boolean;
   onAction?: (action: SimAction) => void;
 }) {
@@ -383,6 +387,9 @@ export function OperatorConsole({
           startedAt={startedAtRef.current}
           themeKey={themeKey}
           onCycleTheme={onCycleTheme}
+          safeInsets={safeInsets}
+          awardFit={awardFit}
+          onToggleAwardFit={onToggleAwardFit}
           playing={playing}
           setPlaying={setPlaying}
           speed={speed}
@@ -402,7 +409,6 @@ export function OperatorConsole({
           imageSrc={imageSrc}
           playing={playing}
           speed={speed}
-          safeInsets={safeInsets}
           awardFit={awardFit}
           showControls={showControls}
           setPlaying={setPlaying}
@@ -429,7 +435,6 @@ function ScoreboardBody({
   imageSrc,
   playing,
   speed,
-  safeInsets,
   awardFit,
   showControls,
   setPlaying,
@@ -443,7 +448,6 @@ function ScoreboardBody({
   imageSrc: string | null;
   playing: boolean;
   speed: number;
-  safeInsets: SafeInsets;
   awardFit: AwardFit;
   showControls: boolean;
   setPlaying: (updater: (p: boolean) => boolean) => void;
@@ -451,6 +455,10 @@ function ScoreboardBody({
 }) {
   return (
     <>
+      {/* Safe margins are a property of the hall wall, so they render only
+          on the audience display — the operator's own scoreboard (laptop)
+          always shows the full-bleed board. awardFit stays: it previews the
+          same aspect treatment the audience will see. */}
       <LiveScoreboard
         data={data}
         problems={problems}
@@ -459,7 +467,7 @@ function ScoreboardBody({
         markedProblemId={markedProblemId}
         imageSrc={imageSrc}
         speed={speed}
-        safeInsets={safeInsets}
+        safeInsets={ZERO_INSETS}
         awardFit={awardFit}
       />
       {showControls && (
@@ -505,6 +513,9 @@ function ConsoleBody({
   startedAt,
   themeKey,
   onCycleTheme,
+  safeInsets,
+  awardFit,
+  onToggleAwardFit,
   playing,
   setPlaying,
   speed,
@@ -537,6 +548,9 @@ function ConsoleBody({
   startedAt: number | null;
   themeKey: ThemeKey;
   onCycleTheme: () => void;
+  safeInsets: SafeInsets;
+  awardFit: AwardFit;
+  onToggleAwardFit: () => void;
   playing: boolean;
   setPlaying: (updater: (p: boolean) => boolean) => void;
   speed: number;
@@ -588,6 +602,9 @@ function ConsoleBody({
         startedAt={startedAt}
         themeKey={themeKey}
         onCycleTheme={onCycleTheme}
+        safeInsets={safeInsets}
+        awardFit={awardFit}
+        onToggleAwardFit={onToggleAwardFit}
       />
       <div className="op-panes">
         <NowPane
@@ -736,8 +753,9 @@ function HelpOverlay({
             <kbd>Shift</kbd>+<kbd>↓↑→←</kbd>
           </dt>
           <dd>
-            Safe margins, top / left edge: the arrow is the direction the edge
-            moves (inward = more margin, for a curtain covering that edge)
+            Safe margins on the audience display, top / left edge: the arrow is
+            the direction the edge moves (inward = more margin, for a curtain
+            covering that edge of the hall wall)
           </dd>
           <dt>
             <kbd>⌥</kbd>+<kbd>↑↓←→</kbd>

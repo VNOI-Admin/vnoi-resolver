@@ -104,6 +104,13 @@
     color-mix(in srgb, var(--ui-accent, #22d3ee) 25%, transparent);
 }
 
+/* Margins readout lights up whenever the audience display is being padded,
+   so active safe margins are visible from the console (the operator's own
+   view never renders them). */
+.op-margins-active {
+  color: var(--ui-accent, #22d3ee);
+}
+
 .op-theme-pill {
   appearance: none;
   background: color-mix(in srgb, var(--ui-text-muted, #94a3b8) 8%, transparent);

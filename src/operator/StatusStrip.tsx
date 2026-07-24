@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 
 import { THEMES, type ThemeKey } from '../canvas/theme';
+import type { AwardFit, SafeInsets } from '../util/safeArea';
 import { formatElapsed } from './format';
 
 // Top band. Compact, single-line, theme-aware.
@@ -20,7 +21,10 @@ export function StatusStrip({
   total,
   startedAt,
   themeKey,
-  onCycleTheme
+  onCycleTheme,
+  safeInsets,
+  awardFit,
+  onToggleAwardFit
 }: {
   cursor: number;
   previewCursor: number | null;
@@ -28,10 +32,18 @@ export function StatusStrip({
   startedAt: number | null;
   themeKey: ThemeKey;
   onCycleTheme: () => void;
+  safeInsets: SafeInsets;
+  awardFit: AwardFit;
+  onToggleAwardFit: () => void;
 }) {
   const effective = previewCursor ?? cursor;
   const pct = total > 0 ? Math.round((effective / total) * 1000) / 10 : 0;
   const themeName = THEMES[themeKey].name;
+  // Two readout pairs matching the two key families: Shift works the
+  // top/left edges, ⌥ the bottom/right — but visually top+bottom belong
+  // together (vertical) as do left+right (horizontal).
+  const verticalActive = safeInsets.top !== 0 || safeInsets.bottom !== 0;
+  const horizontalActive = safeInsets.left !== 0 || safeInsets.right !== 0;
   return (
     <div className="op-status">
       <div className="op-status-left">
@@ -63,12 +75,37 @@ export function StatusStrip({
       </div>
       <div className="op-status-right">
         <span
-          className="op-status-cell op-conn op-conn-live"
-          title="Audience window is open and receiving updates"
+          className={
+            'op-status-cell op-margins' +
+            (verticalActive ? ' op-margins-active' : '')
+          }
+          title={
+            'Vertical safe margins on the audience display (px). ' +
+            'Top edge: Shift+↓ in / Shift+↑ out. Bottom edge: ⌥+↑ in / ⌥+↓ out.'
+          }
         >
-          <span className="op-conn-dot" aria-hidden />
-          audience: live
+          top {safeInsets.top} · bottom {safeInsets.bottom}
         </span>
+        <span
+          className={
+            'op-status-cell op-margins' +
+            (horizontalActive ? ' op-margins-active' : '')
+          }
+          title={
+            'Horizontal safe margins on the audience display (px). ' +
+            'Left edge: Shift+→ in / Shift+← out. Right edge: ⌥+← in / ⌥+→ out.'
+          }
+        >
+          left {safeInsets.left} · right {safeInsets.right}
+        </span>
+        <button
+          type="button"
+          className="op-status-cell op-theme-pill"
+          onClick={onToggleAwardFit}
+          title="Toggle award image fit (I): fill stretches to the safe box, contain letterboxes"
+        >
+          award: {awardFit}
+        </button>
         <button
           type="button"
           className="op-status-cell op-theme-pill"
@@ -77,6 +114,13 @@ export function StatusStrip({
         >
           theme: {themeName.toLowerCase()}
         </button>
+        <span
+          className="op-status-cell op-conn op-conn-live"
+          title="Audience window is open and receiving updates"
+        >
+          <span className="op-conn-dot" aria-hidden />
+          audience: live
+        </span>
       </div>
     </div>
   );

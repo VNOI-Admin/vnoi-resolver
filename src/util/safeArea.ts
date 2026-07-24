@@ -1,8 +1,10 @@
-// Safe-area insets: pixels shaved off each edge of the display because
-// something physical covers it (a stage-curtain valance over the top of the
-// hall LED wall, side drapes, a bottom edge cut by the stage floor). The
-// scoreboard + award art render inside the remaining box; the bands outside
-// are plain background, so whatever covers them is content-free.
+// Safe-area insets: pixels shaved off each edge of the AUDIENCE display
+// because something physical covers it (a stage-curtain valance over the
+// top of the hall LED wall, side drapes, a bottom edge cut by the stage
+// floor). The audience scoreboard + award art render inside the remaining
+// box; the bands outside are plain background, so whatever covers them is
+// content-free. The operator's own view never pads — the obstruction is on
+// the wall, not the laptop — the operator just owns the state and keys.
 //
 // Tuned live on the operator window while looking at the wall: the arrow is
 // the direction the edge moves, Shift works the top/left edges, ⌥/Alt the

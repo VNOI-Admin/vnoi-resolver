@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import './App.css';
 import { useKeyPress } from './hooks';
@@ -67,9 +67,12 @@ function Operator() {
   // cut-off bottom). Nudged live while looking at the wall — the arrow is
   // the direction the edge moves, Shift drives the top/left edges, ⌥/Alt
   // the bottom/right ones — and synced to the audience window like the
-  // theme. Chords are kept modifier-disjoint (shift:true,alt:false vs
-  // shift:false,alt:true) so they never double-fire, and the bare arrows
-  // (step) opt out of both in OperatorConsole.
+  // theme. The margins are a property of the WALL, so they render only on
+  // the audience display; the operator's own view stays full-bleed (state
+  // and keys live here purely as the control surface). Chords are kept
+  // modifier-disjoint (shift:true,alt:false vs shift:false,alt:true) so
+  // they never double-fire, and the bare arrows (step) opt out of both in
+  // OperatorConsole.
   const [safeInsets, setSafeInsets] = useState<SafeInsets>(loadSafeInsets);
   useEffect(() => {
     saveSafeInsets(safeInsets);
@@ -93,9 +96,11 @@ function Operator() {
   useEffect(() => {
     saveAwardFit(awardFit);
   }, [awardFit]);
-  useKeyPress('i', () =>
-    setAwardFit((f) => (f === 'fill' ? 'contain' : 'fill'))
+  const toggleAwardFit = useCallback(
+    () => setAwardFit((f) => (f === 'fill' ? 'contain' : 'fill')),
+    []
   );
+  useKeyPress('i', toggleAwardFit);
 
   const [speed, setSpeed] = useState(1);
 
@@ -197,6 +202,7 @@ function Operator() {
             setSpeed={setSpeed}
             safeInsets={safeInsets}
             awardFit={awardFit}
+            onToggleAwardFit={toggleAwardFit}
             audienceConnected={audienceConnected}
             onAction={broadcastAction}
           />

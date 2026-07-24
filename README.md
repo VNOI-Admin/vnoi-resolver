@@ -100,8 +100,11 @@ the alive-timeout (~5 s) so the operator can see the show again.
 
 When an audience window is connected, the operator window is a pure control
 surface: status strip at top (cursor position, % revealed, elapsed time,
-audience-connection dot, theme indicator), three panes (NOW · NEXT · QUEUE),
-and a timeline + transport row at the bottom.
+safe-margins readouts as two pairs — `top · bottom` and `left · right`,
+each highlighted while that axis of the audience display is padded —
+award-fit pill (click = press `I`), audience-connection dot, theme
+indicator), three panes (NOW · NEXT · QUEUE), and a timeline + transport row
+at the bottom.
 
 - **NOW** shows what the audience is currently looking at (active user, last
   resolved submission, current award thumbnail if one's overlaid).
@@ -143,9 +146,12 @@ covered by the stage curtain). Three mechanisms keep the show intact there:
   edge inward on the operator window: the arrow key is the direction the
   edge moves, `Shift` drives the top/left edges, `⌥` the bottom/right ones —
   e.g. `Shift+↓` pushes the top edge down until the header clears the
-  curtain, `⌥+↑` raises the bottom edge. The board and award art render
-  inside the safe box; the bands outside are just background. Values persist
-  in `localStorage` and sync live to the audience window.
+  curtain, `⌥+↑` raises the bottom edge. The margins are a property of the
+  wall, so they render **only on the audience display** — the board and
+  award art there draw inside the safe box, with theme background outside —
+  while the operator's own view stays full-bleed. (They therefore need the
+  audience window on the wall; a lone operator window never pads.) Values
+  persist in `localStorage` and sync live.
 - **Award image fit** — `I` toggles the award art between `fill` (stretch to
   the safe box, default) and `contain` (letterbox, keeps the original aspect
   ratio). Also persisted and synced.
