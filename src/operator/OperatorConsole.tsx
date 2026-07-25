@@ -222,12 +222,6 @@ export function OperatorConsole({
     const t = prevMoveCursor(eventClass, cursor);
     if (t !== null) jumpTo(t);
   }, [eventClass, cursor, jumpTo]);
-  const jumpToStart = useCallback(() => jumpTo(0), [jumpTo]);
-  const jumpToEnd = useCallback(
-    () => jumpTo(totalEvents),
-    [jumpTo, totalEvents]
-  );
-
   const seek = useMemo<SeekControls>(
     () => ({
       prevAward: jumpPrevAward,
@@ -281,14 +275,10 @@ export function OperatorConsole({
   useKeyPress('9', chooserKey(8), chooserKeysEnabled);
   useKeyPress(' ', () => setPlaying((p) => !p), shortcutsEnabled);
   useKeyPress('c', () => setShowControls((s) => !s), shortcutsEnabled);
-  // Seek navigation. ] [ for awards, . , for rank-changes (the unshifted
-  // > < keys read as "seek"), Home/End for the ends of the reveal.
-  useKeyPress(']', jumpNextAward, shortcutsEnabled);
-  useKeyPress('[', jumpPrevAward, shortcutsEnabled);
-  useKeyPress('.', jumpNextMove, shortcutsEnabled);
-  useKeyPress(',', jumpPrevMove, shortcutsEnabled);
-  useKeyPress('Home', jumpToStart, shortcutsEnabled);
-  useKeyPress('End', jumpToEnd, shortcutsEnabled);
+  // NO seek keys: ←/→ are the only navigation the keyboard offers. Every
+  // jump (award, rank-change) seeks across MANY events at once, and a
+  // fat-fingered key fast-forwarded the show once — jumps are mouse-only
+  // (transport buttons + queue-row clicks), where the action is deliberate.
   // H toggles regardless so it can also close the modal.
   useKeyPress('h', () => setShowHelp((s) => !s));
   useKeyPress('f', toggleFullscreen, shortcutsEnabled);
@@ -717,18 +707,6 @@ function HelpOverlay({
             <kbd>Space</kbd>
           </dt>
           <dd>Play / pause autoplay</dd>
-          <dt>
-            <kbd>]</kbd> / <kbd>[</kbd>
-          </dt>
-          <dd>Jump to next / previous award</dd>
-          <dt>
-            <kbd>.</kbd> / <kbd>,</kbd>
-          </dt>
-          <dd>Jump to next / previous rank change</dd>
-          <dt>
-            <kbd>Home</kbd> / <kbd>End</kbd>
-          </dt>
-          <dd>Jump to the start / end of the reveal</dd>
           {showCKeyHint ? (
             <>
               <dt>

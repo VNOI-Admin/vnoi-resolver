@@ -3,8 +3,9 @@ import { useMemo, useRef } from 'react';
 import type { ResolverEvent } from '../lib/resolver';
 
 /**
- * Full-width progress bar with award ticks. Hover-to-preview, no
- * click-to-commit (footgun) — only ← / → commit.
+ * Full-width progress bar with award ticks. Hover-to-preview only — the bar
+ * itself never commits (footgun); commits happen via ← / →, the transport
+ * buttons, or queue-row clicks.
  */
 export function Timeline({
   events,
@@ -93,8 +94,9 @@ export type SeekControls = {
 };
 
 /** Rollback / play-pause / step / speed slider + a seek cluster (jump to
- *  prev/next award and rank-change). Mouse-fallback for the keyboard
- *  bindings; each button advertises its hotkey for discoverability. */
+ *  prev/next award and rank-change). The step/play buttons advertise their
+ *  hotkeys; the seek cluster is deliberately mouse-ONLY — jumps cross many
+ *  events at once and lost their key bindings after a fat-finger incident. */
 export function Transport({
   playing,
   speed,
@@ -120,44 +122,40 @@ export function Transport({
           className="op-transport-btn op-transport-btn-seek"
           onClick={() => seek.prevMove()}
           disabled={!seek.canPrevMove}
-          title="Jump back to previous rank change (,)"
+          title="Jump back to previous rank change"
           aria-label="Previous rank change"
         >
           <span className="op-transport-glyph">⤒</span>
-          <kbd className="op-transport-key">,</kbd>
         </button>
         <button
           type="button"
           className="op-transport-btn op-transport-btn-seek"
           onClick={() => seek.prevAward()}
           disabled={!seek.canPrevAward}
-          title="Jump back to previous award ([)"
+          title="Jump back to previous award"
           aria-label="Previous award"
         >
           <span className="op-transport-glyph">🏆‹</span>
-          <kbd className="op-transport-key">[</kbd>
         </button>
         <button
           type="button"
           className="op-transport-btn op-transport-btn-seek"
           onClick={() => seek.nextAward()}
           disabled={!seek.canNextAward}
-          title="Jump to next award (])"
+          title="Jump to next award"
           aria-label="Next award"
         >
           <span className="op-transport-glyph">›🏆</span>
-          <kbd className="op-transport-key">]</kbd>
         </button>
         <button
           type="button"
           className="op-transport-btn op-transport-btn-seek"
           onClick={() => seek.nextMove()}
           disabled={!seek.canNextMove}
-          title="Jump to next rank change (.)"
+          title="Jump to next rank change"
           aria-label="Next rank change"
         >
           <span className="op-transport-glyph">⤓</span>
-          <kbd className="op-transport-key">.</kbd>
         </button>
       </div>
       <div className="op-transport-btn-group">
