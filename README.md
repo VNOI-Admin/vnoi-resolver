@@ -93,8 +93,9 @@ the BroadcastChannel).
   transport). `useResolver` state survives the switch, so cursor / playing
   / speed / hover preview never reset.
 
-Close the audience window → operator flips back to scoreboard mode after
-the alive-timeout (~5 s) so the operator can see the show again.
+Close the audience window → it announces `bye` on pagehide, so the operator
+flips back to scoreboard mode instantly. If the audience dies without a
+pagehide (crash, power loss), the alive-timeout catches it in ~10 s.
 
 ### Operator console (console mode)
 
@@ -113,15 +114,18 @@ at the bottom.
   row, prefixed with its `1`–`9` hotkey and labelled with the eventual score.
   The operator sees that pressing `2` reveals the bigger / dramatic one while
   `→` takes the smaller default.
-- **QUEUE** lists the next ~10 events. Hover any row → NOW + NEXT preview the
+- **QUEUE** lists the next ~20 events. Hover any row → NOW + NEXT preview the
   state at that point in the reveal, without committing (the audience doesn't
-  see it). Hover leaves → revert.
+  see it). Hover leaves → revert. Clicking a row commits (pauses, then jumps
+  the live cursor there).
 - **Timeline** is a 1px bar with award reveals marked as small cyan ticks
   and the live cursor as a vertical accent line. Hover anywhere on the bar →
-  same preview as queue rows. No click-to-commit (footgun); ← / → are the
-  only commit paths.
-- **Transport** mirrors the keyboard: `⏮` `⏯` `⏭` buttons with their hotkey
-  chips, plus the autoplay speed slider.
+  same preview as queue rows. The bar itself never commits (footgun).
+- **Transport** — `⏮` `⏯` `⏭` step/play buttons with their hotkey chips,
+  the autoplay speed slider, and a mouse-ONLY seek cluster (prev/next award,
+  prev/next rank-change). Jumps cross many events at once, so they
+  deliberately have no keyboard bindings: ← / → are the only navigation
+  keys.
 
 Look at the audience window for the live scoreboard view; look at the
 operator window for what's about to happen. (If you don't open an audience
@@ -232,7 +236,8 @@ burst.
   / `events[]` / a memoised `peekAt(cursor)` so the operator console can
   render lookahead and hover-previews without dispatching.
 - [`src/canvas/`](src/canvas/) — Pixi React components: `Scoreboard`, `Header`,
-  `Row`, `Pill`. Used only by the audience window. Tweens (row Y, score,
+  `Row`, `Pill`. Rendered by the audience window and by the operator's
+  scoreboard mode. Tweens (row Y, score,
   penalty, glow, pill colour/halo, camera pan) share a single `useTick` via
   [`animation.tsx`](src/canvas/animation.tsx)'s job registry, so idle rows
   contribute zero per-frame work. The body is virtualized — only rows whose
@@ -251,7 +256,8 @@ burst.
   owns the BroadcastChannel, an action log, the theme-CSS bridge, and the
   audience-connection heartbeat (lit when an `alive` message has arrived
   within `ALIVE_TIMEOUT_MS`); it broadcasts an `init` payload in response to
-  audience `hello` pings and broadcasts every step / rollback / theme cycle
+  audience `hello` pings and broadcasts every action and setting change
+  (step / rollback / seek, theme, speed, safe margins, award fit)
   thereafter.
 - [`src/Audience.tsx`](src/Audience.tsx) — audience-window mirror. Polls
   hello until it gets an `init`, replays the operator's action log into its
@@ -259,8 +265,9 @@ burst.
   `alive` heartbeat for the operator's connection indicator. No operator
   chrome, cursor auto-hides after 2 s.
 - [`src/sync.ts`](src/sync.ts) — `BroadcastChannel` wrapper + `SyncMessage`
-  union (`hello` / `init` / `append` / `theme` / `alive`). Single schema both
-  windows agree on.
+  union (`hello` / `init` / `append` / `theme` / `speed` / `safeInsets` /
+  `awardFit` / `alive` / `bye`; appends carry `step` / `rollback` / `seek`
+  actions). Single schema both windows agree on.
 - [`src/canvas/theme.ts`](src/canvas/theme.ts) — theme registry +
   `ThemeProvider` / `useTheme` hook. Every Pixi component reads colours from
   `useTheme()`; CSS chrome reads from `:root` vars (`--ui-surface`,

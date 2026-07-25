@@ -1,7 +1,7 @@
 /*
  * Theme system: every color routes through CSS vars set on :root by App.tsx
  * based on the active Pixi theme. Fallback values (after each var(..., #xxx))
- * match the Refined dark theme so the page still works if a var is missing
+ * match the Terminal dark theme so the page still works if a var is missing
  * (e.g. very first paint before React mounts).
  *
  *   --ui-surface           page bg

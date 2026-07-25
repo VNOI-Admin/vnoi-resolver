@@ -45,9 +45,11 @@ real windows.
 - **Drive with dispatched keys** —
   `window.dispatchEvent(new KeyboardEvent('keydown', { key: ' ' }))`. Bindings:
   `Space` play/pause · `ArrowRight`/`ArrowLeft` step · `1`–`9` chooser pick ·
-  `]`/`[` award jump · `.`/`,` rank-change jump · `Home`/`End` the ends · `t`
-  theme · `f` fullscreen · `p` FPS · `c` controls bar (scoreboard mode) · `o`
-  audience window · `h` help. Set autoplay speed via the slider:
+  `t` theme · `f` fullscreen · `p` FPS · `c` controls bar (scoreboard mode) ·
+  `o` audience window · `h` help. ←/→ are the ONLY navigation keys — every
+  jump (award / rank-change) is mouse-only via the console transport buttons
+  or a queue-row click; in scoreboard mode, reach an award by stepping or
+  autoplay. Set autoplay speed via the slider:
   `.op-transport-speed input` (console) or `.controls input[type=range]`
   (scoreboard) — set it through the native value setter, the `c` toggle and the
   Run click can race in one eval.
@@ -142,10 +144,13 @@ Report what you saw per item; don't write "looks fine" without having watched it
    previews (is NOT instantly wiped). Then let autoplay/step overtake a _forward_
    hover → that preview clears. (Exercises the prevCursor gate.)
 6. **Click to act** — click a QUEUE row → live cursor jumps there (pausing
-   first); click a chooser row → reveals that submission. Neither fires while a
-   preview is active — hotkeys and clicks both mute.
-7. **Jump nav** — `]`/`[` land exactly on award reveals (the timeline ticks);
-   `.`/`,` on rank-changes; `Home`/`End` on the ends. The transport seek buttons
+   first; queue clicks are live-relative, so they work during their own hover
+   preview by design). Click a chooser row → reveals that submission — the
+   chooser's clicks AND its `1`–`9` hotkeys must mute while a queue/timeline
+   preview is active.
+7. **Jump nav** — mouse-only: the 🏆‹/›🏆 transport buttons land exactly on
+   award reveals (the timeline ticks) and ⤒/⤓ on rank-changes. A `]`, `[`,
+   `.`, `,`, `Home`, or `End` keypress must NOT seek. The transport seek buttons
    disable when there's no target in that direction.
 
 ### D. Transport & autoplay — MCP
@@ -166,7 +171,8 @@ Report what you saw per item; don't write "looks fine" without having watched it
 2. **Idempotent init** — open a SECOND audience window: the first must NOT flash
    or re-tween (init is a no-op for the same ceremony).
 3. **Reconnect** — close the audience window; the operator flips back to
-   scoreboard mode after the alive timeout. Reopen → it re-pairs.
+   scoreboard mode instantly (`bye` on pagehide; the ~10 s alive timeout is
+   only the crash fallback). Reopen → it re-pairs.
 4. **Late join / refresh** — refresh the audience mid-reveal; it replays the
    action log from the start and lands on the operator's exact cursor.
 
@@ -176,5 +182,3 @@ Report what you saw per item; don't write "looks fine" without having watched it
    and ranks correctly through to the end.
 2. **No award art** (image file omitted) — the reveal completes with no award
    pauses and no broken `<img>`.
-   </content>
-   </invoke>

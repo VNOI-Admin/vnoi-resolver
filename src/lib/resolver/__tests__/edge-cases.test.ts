@@ -157,6 +157,41 @@ describe('edge-case datasets', () => {
     expect(after.users[1]!.pendingSubmissionIds).toEqual([]);
   });
 
+  it('keeps a fully-solved problem pending when the user resubmits after the freeze', () => {
+    // Deliberate consequence of "any post-freeze attempt ⇒ pending": even a
+    // problem already at full points freezes as "100?" if the user resubmits
+    // during the freeze — the official boards show the same, and the reveal
+    // spends a (guaranteed no-change) beat on it.
+    const input = makeInput({
+      submissions: [
+        { submissionId: 1, userId: 1, problemId: 10, time: 100, points: 100 },
+        { submissionId: 2, userId: 1, problemId: 10, time: 300, points: 100 }
+      ]
+    });
+    const state = buildInitialState({
+      inputData: input,
+      userIds: [1, 2],
+      frozenTime: 200
+    });
+    const alice = state.users[1]!;
+    expect(alice.points[10]).toBe(100);
+    expect(alice.status[10]! & ProblemAttemptStatus.PENDING).not.toBe(0);
+    expect(alice.pendingSubmissionIds).toEqual([2]);
+
+    const ctx = {
+      submissionById: keyBy(input.submissions, (s) => s.submissionId),
+      pointByProblemId: { 10: 100 }
+    };
+    const after = applyEvent(
+      state,
+      { kind: 'resolve', userId: 1, submissionId: 2 },
+      ctx
+    );
+    expect(after.users[1]!.points[10]).toBe(100);
+    expect(after.users[1]!.pendingSubmissionIds).toEqual([]);
+    expect(after.users[1]!.penalty).toBe(state.users[1]!.penalty);
+  });
+
   it('treats submission at time === frozenTime as pending (strict < boundary)', () => {
     // Two altering submissions for alice on different problems:
     //   sub 1 at t=100  → public (t < 200)
