@@ -173,16 +173,27 @@ export function makeReducer(ctx: SimulationCtx) {
     if (action.type === 'step') {
       if (state.cursor >= state.events.length) return state;
 
-      // Precomputed events assume default choice (smallest problemId).
-      // choice only matters at a mark_problem boundary; choice===0 is the
-      // default (pendingSubmissionIds is sorted by problemId).
+      // choice only matters at a mark_problem boundary, and it is an INDEX
+      // into the current pending list. The plan (events[cursor]) satisfies a
+      // choice only when it marks that exact SUBMISSION — never assume the
+      // plan holds the default: after a diverge + rollback the plan already
+      // follows a non-default pick, so choice 0 must re-diverge back to the
+      // first pending (the reported "can't select 1 after picking 2 and
+      // winding back" bug), and re-picking the planned submission stays an
+      // O(1) cursor move.
       const precomputed = state.events[state.cursor]!;
-      const choiceIsDefault =
-        action.choice === undefined ||
-        action.choice === 0 ||
-        precomputed.kind !== 'mark_problem';
+      let choiceMatchesPlan: boolean;
+      if (action.choice === undefined || precomputed.kind !== 'mark_problem') {
+        choiceMatchesPlan = true;
+      } else {
+        const pickedId =
+          state.states[state.cursor]!.users[precomputed.userId]
+            ?.pendingSubmissionIds[action.choice];
+        if (pickedId === undefined) return state; // choice out of range — no-op
+        choiceMatchesPlan = pickedId === precomputed.submissionId;
+      }
 
-      if (choiceIsDefault) {
+      if (choiceMatchesPlan) {
         return { ...state, cursor: state.cursor + 1 };
       }
 

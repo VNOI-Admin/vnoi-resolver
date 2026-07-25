@@ -252,6 +252,54 @@ describe('simulation reducer', () => {
     expect(remaining).toBe(0);
   });
 
+  it('choice 0 after diverge+rollback re-selects the FIRST pending (regression)', () => {
+    // Reported live: pick the 2nd pending with `2`, wind back with ←, press
+    // `1` — the old reducer treated choice 0 as "advance along the plan",
+    // but the plan at that cursor is the DIVERGED timeline, so it re-marked
+    // the 2nd pending and the first became unselectable.
+    const ctx = buildCtx();
+    const reduce = makeReducer(ctx);
+    const sim0 = buildInitial();
+    const { cursor } = findMarkProblemBoundary(sim0);
+    let sim = sim0;
+    for (let i = 0; i < cursor; i++) {
+      sim = reduce(sim, { type: 'step', choice: undefined });
+    }
+    const defaultEvent = sim.events[cursor]!;
+    if (defaultEvent.kind !== 'mark_problem') throw new Error('bad fixture');
+
+    const diverged = reduce(sim, { type: 'step', choice: 1 });
+    const back = reduce(diverged, { type: 'rollback' });
+    expect(back.cursor).toBe(cursor);
+
+    const repick = reduce(back, { type: 'step', choice: 0 });
+    const ev = repick.events[cursor]!;
+    expect(ev.kind).toBe('mark_problem');
+    if (ev.kind === 'mark_problem') {
+      // Must be the first pending again — the original default submission.
+      expect(ev.submissionId).toBe(defaultEvent.submissionId);
+    }
+  });
+
+  it('re-picking the SAME diverged choice after rollback advances without recompute', () => {
+    const ctx = buildCtx();
+    const reduce = makeReducer(ctx);
+    const sim0 = buildInitial();
+    const { cursor } = findMarkProblemBoundary(sim0);
+    let sim = sim0;
+    for (let i = 0; i < cursor; i++) {
+      sim = reduce(sim, { type: 'step', choice: undefined });
+    }
+    const diverged = reduce(sim, { type: 'step', choice: 1 });
+    const back = reduce(diverged, { type: 'rollback' });
+    const again = reduce(back, { type: 'step', choice: 1 });
+    // The plan already marks that exact submission: O(1) cursor move, no
+    // timeline churn (same array references).
+    expect(again.cursor).toBe(cursor + 1);
+    expect(again.events).toBe(back.events);
+    expect(again.states).toBe(back.states);
+  });
+
   it('unofficial contestant at the bottom row is skipped: first event marks the next-up official user', () => {
     // Find the bottom-ranked official user — pretend they're unofficial.
     // The reducer should jump straight past them to the row above.

@@ -211,6 +211,11 @@ export function NextPane({
         {isChooser ? (
           <ChooserBody
             choices={pendingChoices}
+            plannedSubmissionId={
+              nextEvent && nextEvent.kind === 'mark_problem'
+                ? nextEvent.submissionId
+                : null
+            }
             ctx={ctx}
             activeUserName={
               snapshot.markedUserId >= 0
@@ -440,6 +445,7 @@ function SingularBody({
 
 function ChooserBody({
   choices,
+  plannedSubmissionId,
   ctx,
   activeUserName,
   isPreviewing,
@@ -455,6 +461,10 @@ function ChooserBody({
     currentRank: string;
     projectedRank: string;
   }>;
+  // The submission the precomputed plan marks next — what a plain `→` will
+  // take. Usually the first pending, but after a diverge + rollback the plan
+  // follows the earlier pick, so "default" must track the PLAN, not index 0.
+  plannedSubmissionId: number | null;
   ctx: LookupCtx;
   activeUserName: string | null;
   // Mute the kbd chips when previewing: the keys would commit against the
@@ -484,7 +494,7 @@ function ChooserBody({
           const prob = ctx.problemsById[c.problemId];
           const idx = ctx.problemIndexById[c.problemId];
           const code = idx !== undefined ? getProblemCodeFromIndex(idx) : '?';
-          const isDefault = i === 0;
+          const isDefault = c.submissionId === plannedSubmissionId;
           const resolvesToZero = c.eventualPoints === 0;
           const rankShifts =
             c.currentRank !== '' &&
@@ -497,7 +507,6 @@ function ChooserBody({
                 'op-chooser-item' +
                 (isDefault ? ' op-chooser-item-default' : '') +
                 (resolvesToZero ? ' op-chooser-item-zero' : '') +
-                (rankShifts ? ' op-chooser-item-shifts' : '') +
                 (hoveredChoice === c.submissionId
                   ? ' op-chooser-item-hovered'
                   : '') +
