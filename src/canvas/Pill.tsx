@@ -13,6 +13,7 @@ import type {
 import { ProblemAttemptStatus } from '../lib/resolver';
 import { TEXT, useTheme } from './theme';
 import { PILL_HEIGHT, PILL_Y } from './layout';
+import { pillLabel } from './pillLabel';
 import { useAnimationJob } from './animation';
 import { useAnimationSpeed } from './animationSpeed';
 import { tweenColorNow } from './colorTween';
@@ -36,7 +37,8 @@ function PillInner({
   status,
   scoreClass,
   highlighted,
-  problemCode
+  problemCode,
+  attempts
 }: {
   x: number;
   w: number;
@@ -45,6 +47,7 @@ function PillInner({
   scoreClass: string;
   highlighted: boolean;
   problemCode: string;
+  attempts: number;
 }) {
   const theme = useTheme();
   const isPending = !!(status & ProblemAttemptStatus.PENDING);
@@ -212,11 +215,7 @@ function PillInner({
     [repaintPill, targetColor, COLOR_TWEEN_MS]
   );
 
-  const label = isUnattempted
-    ? problemCode
-    : isPending
-      ? `${points || ''}?`
-      : String(points);
+  const label = pillLabel(points, status, attempts, problemCode);
 
   return (
     <pixiContainer>

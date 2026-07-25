@@ -75,4 +75,5 @@ export type UserRow = {
   points: PointByProblemId;
   status: StatusByProblemId;
   scoreClass: ScoreClassByProblemId;
+  submissionIdsByProblemId: { [problemId: number]: number[] };
 };

@@ -368,6 +368,9 @@ function RowInner({
             }
             scoreClass={row.scoreClass[problem.problemId] ?? ''}
             highlighted={false}
+            attempts={
+              (row.submissionIdsByProblemId[problem.problemId] ?? []).length
+            }
           />
         );
       })}
@@ -391,6 +394,9 @@ function RowInner({
               }
               scoreClass={row.scoreClass[problem.problemId] ?? ''}
               highlighted
+              attempts={
+                (row.submissionIdsByProblemId[problem.problemId] ?? []).length
+              }
             />
           );
         })()}
@@ -430,7 +436,8 @@ function rowEqual(a: RowProps, b: RowProps): boolean {
     a.row.rank === b.row.rank &&
     a.row.points === b.row.points &&
     a.row.status === b.row.status &&
-    a.row.scoreClass === b.row.scoreClass
+    a.row.scoreClass === b.row.scoreClass &&
+    a.row.submissionIdsByProblemId === b.row.submissionIdsByProblemId
   );
 }
 
