@@ -13,12 +13,7 @@ import type {
   Graphics as PixiGraphics
 } from 'pixi.js';
 import type { InputProblem, UserRow } from '../lib/resolver';
-import {
-  HEADER_HEIGHT,
-  CARD_HEIGHT,
-  boardContentWidth,
-  computeLayout
-} from './layout';
+import { HEADER_HEIGHT, CARD_HEIGHT, computeLayout } from './layout';
 import { ZERO_INSETS, type SafeInsets } from '../util/safeArea';
 import { Header } from './Header';
 import { Row } from './Row';
@@ -127,13 +122,13 @@ export function Scoreboard({
     0,
     viewport.width - safeInsets.left - safeInsets.right
   );
-  const boardWidth = boardContentWidth(availWidth, contentHeight);
   const layout = useMemo(
-    () => computeLayout(boardWidth, problems.length),
-    [boardWidth, problems.length]
+    () => computeLayout(availWidth, problems.length),
+    [availWidth, problems.length]
   );
-  // Center the pillarboxed board inside the safe box; a many-problem
-  // overflow (totalWidth wider than the box) stays left-aligned like before.
+  // The board fills the safe box's full width. The centering term only
+  // engages when NAME_MIN_WIDTH floors totalWidth above availWidth (tiny
+  // window) — that overflow stays left-aligned at the safe edge.
   const offsetX =
     safeInsets.left +
     Math.max(0, Math.floor((availWidth - layout.totalWidth) / 2));

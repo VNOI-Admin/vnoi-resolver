@@ -135,16 +135,10 @@ before.)
 ### Ultrawide / hall LED walls
 
 Hall LED walls are often much wider than 16:9 (and sometimes partially
-covered by the stage curtain). Three mechanisms keep the show intact there:
+covered by the stage curtain). The board always fills the full visible box
+(the name column absorbs the extra width on a wide wall — no pillarboxing),
+and two mechanisms keep the show intact:
 
-- **Pillarboxing** — whenever the visible box (the viewport minus any safe
-  margins) is wider than 16:9, the board is clamped to a 16:9-ish content
-  frame (never narrower than 1600px) and centered in it, with plain theme
-  background on the sides, instead of stretching the name column and pills
-  across the full width. With no margins set, screens at or narrower than
-  16:9 render exactly as before; note that top/bottom margins shorten the
-  visible box, so adding them on a 16:9 screen can engage the clamp — the
-  frame follows the hole the audience actually sees.
 - **Safe margins (all four edges)** — if a curtain valance covers the top of
   the wall (or drapes cover a side, or the bottom is cut off), nudge that
   edge inward on the operator window: the arrow key is the direction the

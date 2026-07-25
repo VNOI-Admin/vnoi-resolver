@@ -24,27 +24,6 @@ export const PILL_MIN_WIDTH = 70;
 
 export const PILL_Y = TOP_ROW_HEIGHT + (PILL_ROW_HEIGHT - PILL_HEIGHT) / 2;
 
-// Screens wider than 16:9 (hall LED walls) get the board pillarboxed instead
-// of stretching the name column + pills across the full width. Anything at or
-// narrower than 16:9 keeps the full-bleed layout unchanged. The floor stops a
-// very short viewport (a 1920×790 wall signal) from squeezing the board into
-// a sliver — wide flat pills read better than a narrow strip lost mid-wall.
-export const BOARD_MAX_ASPECT = 16 / 9;
-export const BOARD_MIN_CLAMP_WIDTH = 1600;
-
-export function boardContentWidth(
-  viewportWidth: number,
-  contentHeight: number
-): number {
-  return Math.min(
-    viewportWidth,
-    Math.max(
-      BOARD_MIN_CLAMP_WIDTH,
-      Math.round(contentHeight * BOARD_MAX_ASPECT)
-    )
-  );
-}
-
 export type Layout = {
   rank: { x: number; w: number };
   name: { x: number; w: number };
